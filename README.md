@@ -1,2 +1,1 @@
-# orion_platform_backend
-Bckend code repository for Orion  platform
+docker-compose up --build
