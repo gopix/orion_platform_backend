@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  api:
+    image: gopalorion/orion_module_api:v1.0.0
+    container_name: orion_module_api
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_NAME: orion_db
+      UPLOAD_DIR: /app/uploads
+      MAX_UPLOAD_SIZE: 104857600
+      ALLOWED_MIME_TYPES: application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain
+      STORAGE_PROVIDER: local
+      LOG_DIR: /app/logs
+      LOG_LEVEL: INFO
+
+  db:
+    image: gopalorion/orion_db_mysql:v1.0.0
+    container_name: orion_db_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: orion_db
+    ports:
+      - "3306:3306"
+    volumes:
+      - orion_db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  orion_db_data:

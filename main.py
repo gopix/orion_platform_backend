@@ -5,6 +5,12 @@ from contextlib import asynccontextmanager
 from api_router import api_router
 from src.core.database import Base, engine
 from src.core.exceptions import register_exception_handlers
+import os
+from src.core.config import settings
+
+from src.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 # -----------------------------
 # Lifespan (Startup + Shutdown)
@@ -12,25 +18,25 @@ from src.core.exceptions import register_exception_handlers
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic
-    print("🚀 Starting Orion Backend...")
+    logger.info(" Starting Orion Backend...")
     
     # DB init
     Base.metadata.create_all(bind=engine)
 
     # Print all routes
-    print("\n📌 Registered Routes:")
+    logger.info(" Registered Routes:")
     for route in app.routes:
         if hasattr(route, "methods"):
-            print(f"{list(route.methods)} -> {route.path}")
+            logger.info(f"{list(route.methods)} -> {route.path}")
 
     yield
 
-    print("🛑 Shutting down Orion Backend...")
+    logger.info("Shutting down Orion Backend...")
 
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title="Orion Backend",
+        title="Orion Backend API",
         version="1.0.0",
         description="AI-driven backend platform",
         lifespan=lifespan   # ✅ NEW
@@ -67,6 +73,7 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
 
 
 if __name__ == "__main__":

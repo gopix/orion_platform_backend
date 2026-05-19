@@ -5,8 +5,12 @@ pydantic==2.6.4
 passlib[bcrypt]==1.7.4
 pyjwt==2.8.0
 email-validator==2.1.1
- pydantic-settings==2.2.1
+pydantic-settings==2.2.1
+python-multipart==0.0.9
 PyMySQL==1.1.0
 cryptography>=42.0.0,<45.0.0
 bcrypt==4.0.1
 passlib[bcrypt]==1.7.4
+python-docx==0.8.11
+PyPDF2==3.0.1
+openpyxl==3.1.5
