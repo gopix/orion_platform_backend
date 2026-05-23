@@ -1,10 +1,14 @@
+from datetime import datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from src.core.database import get_db
 from src.modules.accessibility_plus.engines.accesibility_engine_pipeline import AccessibilityEnginePipeline
 from src.modules.accessibility_plus.engines.audit_template_engine import AccessiblilityAudit
+from src.modules.accessibility_plus.models.master_accessibility_model import MasterAccessibilityModel
 
 router = APIRouter()
 accessibility_audit_engine = AccessiblilityAudit()
@@ -62,6 +66,26 @@ class RunAccessibilityChecksResponse(BaseModel):
     results: list[dict[str, Any]]
 
 
+class MasterAccessibilityCheckResponse(BaseModel):
+    check_id: int
+    check_code: str
+    check_name: str
+    description: str | None = None
+    category: str
+    default_priority: Literal["HIGH", "MEDIUM", "LOW"]
+    wcag_reference: str | None = None
+    pdfua_reference: str | None = None
+    remediation_guidance: str | None = None
+    agent_code: str | None = None
+    is_active: bool
+    created_at: datetime | None = None
+
+
+class MasterAccessibilityChecksListResponse(BaseModel):
+    total: int
+    checks: list[MasterAccessibilityCheckResponse]
+
+
 @router.post(
     "/master_accessibility_check",
     status_code=status.HTTP_200_OK,
@@ -76,6 +100,22 @@ async def upsert_master_accessibility_check_json(payload: MasterAccessibilityChe
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Failed to process JSON rows") from exc
+
+
+@router.get(
+    "/master_accessibility_check",
+    status_code=status.HTTP_200_OK,
+    response_model=MasterAccessibilityChecksListResponse,
+)
+def get_all_master_accessibility_checks(db: Session = Depends(get_db)):
+    try:
+        checks = db.query(MasterAccessibilityModel).order_by(MasterAccessibilityModel.check_id.asc()).all()
+        return MasterAccessibilityChecksListResponse(
+            total=len(checks),
+            checks=[MasterAccessibilityCheckResponse(**check.to_dict()) for check in checks],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Failed to fetch master accessibility checks") from exc
 
 
 @router.post(
