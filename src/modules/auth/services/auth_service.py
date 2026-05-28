@@ -24,12 +24,15 @@ def create_user(db: Session, user_in: UserCreate):
 
 
 def authenticate_user(db: Session, email: str, password: str):
+    print(f"*********email: {email}, password: {password}")
     user = db.query(User).filter(User.email == email).first()
 
     if not user:
+        print("*********User not found")
         return None
 
     if not verify_password(password, user.password_hash):
+        print("*********Invalid password")
         return None
 
     return user
