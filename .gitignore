@@ -22,3 +22,7 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+#PDF Fix
+pdfix_sdk-9.0.0/
+verapdf-installer/

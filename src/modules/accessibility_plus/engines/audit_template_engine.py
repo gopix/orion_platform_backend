@@ -205,3 +205,38 @@ class AccessiblilityAudit:
             raise ValueError(f"Failed to clone master checks: {str(exc)}") from exc
         finally:
             session.close()
+
+    def fetch_organization_wise_checks(self, organization_id: int) -> list[dict[str, Any]]:
+        """
+        Fetch all accessibility checks scoped to an organization (including project-specific).
+        """
+        session = SessionLocal()
+        try:
+            checks = session.query(OrgProjectAccessibilityCheckModel).filter_by(
+                organization_id=organization_id
+            ).order_by(OrgProjectAccessibilityCheckModel.id.asc()).all()
+
+            return [
+                {
+                    # Keep backward-compatible key name while mapping to the actual column.
+                    "check_id": check.master_check_id,
+                    "org_check_id": check.id,
+                    "organization_id": check.organization_id,
+                    "project_id": check.project_id,
+                    "check_code": check.check_code,
+                    "check_name": check.check_name,
+                    "description": check.description,
+                    "category": check.category,
+                    "default_priority": check.default_priority,
+                    "wcag_reference": check.wcag_reference,
+                    "pdfua_reference": check.pdfua_reference,
+                    "remediation_guidance": check.remediation_guidance,
+                    "agent_code": check.agent_code,
+                    "is_active": check.is_active,
+                }
+                for check in checks
+            ]
+        except Exception as exc:
+            raise ValueError(f"Failed to fetch organization-wise checks: {str(exc)}") from exc
+        finally:
+            session.close()

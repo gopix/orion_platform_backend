@@ -22,6 +22,7 @@ services:
       STORAGE_PROVIDER: local
       LOG_DIR: /app/logs
       LOG_LEVEL: INFO
+      VERAPDF_COMMAND: /usr/local/bin/verapdf
 
   db:
     image: gopalorion/orion_db_mysql:v1.0.0

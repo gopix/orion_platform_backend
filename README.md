@@ -1,3 +1,9 @@
+# for removing cache files:
+# show
+for /d /r . %d in (__pycache__) do @if exist "%d" echo %d
+# delete
+for /d /r . %d in (__pycache__) do @if exist "%d" rd /s /q "%d"
+
 # Step -0 :: stop containers
 docker-compose down 
 

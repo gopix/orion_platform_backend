@@ -21,6 +21,8 @@ services:
       STORAGE_PROVIDER: local
       LOG_DIR: /app/logs
       LOG_LEVEL: INFO
+      VERAPDF_COMMAND: /usr/local/bin/verapdf
+      PDFIX_SDK_PATH: /opt/pdfix_sdk
 
   db:
     build:

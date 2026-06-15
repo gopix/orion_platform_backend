@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 	max_upload_size: int= Field(..., alias="MAX_UPLOAD_SIZE")
 	allowed_mime_types: str= Field(..., alias="ALLOWED_MIME_TYPES")
 	storage_provider: str
+	verapdf_command: str = Field(r"C:\Software\VeraPDF\verapdf.bat", alias="VERAPDF_COMMAND")
 	log_dir: str = Field(..., alias="LOG_DIR")
 	log_level: str = Field(..., alias="LOG_LEVEL")
 

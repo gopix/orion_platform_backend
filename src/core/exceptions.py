@@ -10,7 +10,7 @@ def register_exception_handlers(app):
     @app.exception_handler(HTTPException)
     async def http_exception_handler(request: Request, exc: HTTPException):
         response = APIResponse(
-            status_code=exc.status_code,
+            response_code=exc.status_code,
             message=exc.detail,
             data=None,
             errors=[exc.detail],
@@ -25,7 +25,7 @@ def register_exception_handlers(app):
         ]
 
         response = APIResponse(
-            status_code=422,
+            response_code=422,
             message="Validation error",
             data=None,
             errors=errors,
@@ -35,7 +35,7 @@ def register_exception_handlers(app):
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
         response = APIResponse(
-            status_code=500,
+            response_code=500,
             message="Internal Server Error",
             data=None,
             errors=[str(exc)],
