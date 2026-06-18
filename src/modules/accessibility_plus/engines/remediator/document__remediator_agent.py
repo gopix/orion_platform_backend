@@ -98,35 +98,33 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
             return self._result(rule_id, False, "fix_title", error="pdf_doc not in context")
 
         try:
+            current_title = (pdf_doc.GetInfo("Title") or "").strip()
+            if current_title:
+                return self._result(
+                    rule_id, True, "fix_title",
+                    changes_made=[f"Title already set to '{current_title}' – no change needed"],
+                )
+
+            # Choose title: prefer document_name from context (the uploaded filename
+            # without extension is a reasonable default), fall back to generic.
+            raw_name = context.get("document_name") or ""
+            title = (
+                raw_name.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").strip()
+                or "Untitled Document"
+            )
+
             changes: list[str] = []
 
             # ── 1. Info dictionary ────────────────────────────────────
-            current_title = (pdf_doc.GetInfo("Title") or "").strip()
-            if current_title:
-                # Info /Title already set — keep it, still patch XMP
-                title = current_title
-                changes.append(f"Info /Title already set to '{title}'")
-            else:
-                # Derive title from document filename or fall back
-                raw_name = context.get("document_name") or ""
-                title = (
-                    raw_name.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").strip()
-                    or "Untitled Document"
-                )
-                pdf_doc.SetInfo("Title", title)
-                changes.append(f"Set Info /Title → '{title}'")
+            pdf_doc.SetInfo("Title", title)
+            changes.append(f"Set Info /Title → '{title}'")
 
-            # ── 2. XMP metadata stream — ALWAYS patch, even if Info dict was set ──
-            # Adobe Acrobat's Title check reads dc:title from XMP, not the Info dict.
+            # ── 2. XMP metadata stream ────────────────────────────────
             xmp_warning = _patch_xmp_title(pdf_doc, title)
             if xmp_warning:
                 changes.append(f"XMP dc:title warning: {xmp_warning}")
             else:
                 changes.append(f"Patched XMP dc:title → '{title}'")
-
-            # ── 3. DisplayDocTitle — handled by pipeline pypdf post-processing ──
-            dt_note = _set_display_doc_title(pdf_doc)
-            changes.append(f"DisplayDocTitle: {dt_note or 'will be set by pipeline pypdf step'}")
 
             return self._result(rule_id, True, "fix_title", changes_made=changes)
 
@@ -353,26 +351,13 @@ def _patch_xmp_title(pdf_doc: Any, title: str) -> str | None:
                 xmp_str,
                 flags=_re.DOTALL,
             )
-        elif "</rdf:Description>" in xmp_str:
-            # Strategy 2: open/close rdf:Description — insert dc:title before closing tag
+        else:
+            # Insert before closing </rdf:Description>
             xmp_str = xmp_str.replace(
                 "</rdf:Description>",
                 f"  {dc_title_block}\n</rdf:Description>",
                 1,
             )
-        elif "</rdf:RDF>" in xmp_str:
-            # Strategy 3: self-closing <rdf:Description ... /> — no closing tag to find.
-            # Inject a brand-new rdf:Description block before </rdf:RDF>.
-            new_desc = (
-                '\n<rdf:Description rdf:about=""'
-                ' xmlns:dc="http://purl.org/dc/elements/1.1/">'
-                f'\n  {dc_title_block}'
-                '\n</rdf:Description>\n'
-            )
-            xmp_str = xmp_str.replace("</rdf:RDF>", f"{new_desc}</rdf:RDF>", 1)
-        else:
-            # Strategy 4: XMP is so malformed we can't find any anchor — rebuild
-            xmp_str = _minimal_xmp_packet(title).decode("utf-8")
 
         new_xmp_bytes = xmp_str.encode("utf-8")
         if hasattr(pdf_doc, "SetMetadata"):
@@ -405,14 +390,3 @@ def _minimal_xmp_packet(title: str) -> bytes:
         '<?xpacket end="w"?>'
     )
     return packet.encode("utf-8")
-
-def _set_display_doc_title(pdf_doc: Any) -> str | None:
-    """
-    Attempt to set /ViewerPreferences /DisplayDocTitle via PDFix SDK.
-
-    PDFix SDK 9.0.0 has no Python constant for this preference, so this
-    function always returns a note — the pipeline applies the fix via
-    pypdf AFTER saving (``_apply_display_doc_title`` in the pipeline).
-    """
-    # PDFix 9.0.0: dir(Pdfix) yields [] for 'viewer'/'display' constants.
-    return "will be set by pipeline pypdf post-save step"

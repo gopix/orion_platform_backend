@@ -52,6 +52,29 @@ from src.modules.accessibility_plus.models.master_accessibility_model import (
 router = APIRouter()
 logger = get_logger(__name__)
 
+# File-based debug logger (works even when Uvicorn swallows stdout)
+import sys as _sys
+from pathlib import Path as _Path
+_RLOG = _Path(__file__).parent.parent.parent.parent.parent / "pipeline_debug.log"
+
+def _rdlog(*args, **kwargs):
+    msg = "[ROUTER] " + " ".join(str(a) for a in args)
+    try:
+        with open(_RLOG, "a", encoding="utf-8") as _f:
+            _f.write(msg + "\n")
+    except Exception:
+        pass
+    print(msg, file=_sys.stderr)
+
+_rdlog(f"ROUTER MODULE LOADED — log at {_RLOG}")
+# Version marker — write to encoding_fix.log so we can confirm THIS file is loaded
+try:
+    _marker = _RLOG.parent / "encoding_fix.log"
+    with open(str(_marker), "w", encoding="utf-8") as _mf:
+        _mf.write(f"[ROUTER] VERSION_8 loaded from: {__file__}\nlog: {_RLOG}\n")
+except Exception as _me:
+    _rdlog(f"ROUTER marker write failed: {_me}")
+
 accessibility_audit_engine = AccessiblilityAudit()
 vera_pdf_engine = VeraPDF()
 pdfix_service = PDFixService()
@@ -419,30 +442,40 @@ async def orion_remediate_pdf(
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only .pdf files are supported")
 
+    _rdlog(" orion-remediate-pdf HIT")
     file_bytes = await file.read()
+    _rdlog(f" file read: {len(file_bytes)} bytes")
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
     job_id = uuid.uuid4().hex
+    _rdlog(f" job_id={job_id}")
     logger.info(
         "orion-remediate-pdf | job=%s org=%s project=%s file=%s bytes=%s",
         job_id, organization_id, project_id, file.filename, len(file_bytes),
     )
 
+    _rdlog(" loading PDFix module ...")
     pdfix_module = pdfix_service._load_pdfix_module()
+    _rdlog(f" pdfix_module={pdfix_module}")
     pdfix = pdfix_module.GetPdfix()
+    _rdlog(f" pdfix={pdfix}")
     if not pdfix:
+        _rdlog(" ERROR: pdfix is None")
         raise HTTPException(status_code=500, detail="Unable to initialize PDFix SDK")
 
     tmp_path: str | None = None
     pdf_doc = None
     try:
-        # ── Write upload to a temp file so PDFix can open it ─────────
+        _rdlog(" writing PDF to temp file ...")
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
             tmp.write(file_bytes)
             tmp_path = tmp.name
+        _rdlog(f" tmp_path={tmp_path}")
 
+        _rdlog(" opening PDF with PDFix ...")
         pdf_doc = pdfix.OpenDoc(tmp_path, "")
+        _rdlog(f" pdf_doc={pdf_doc}")
         if not pdf_doc:
             raise ValueError("Failed to open PDF document with PDFix")
 
@@ -453,14 +486,12 @@ async def orion_remediate_pdf(
             "total_pages": pdf_doc.GetNumPages() if hasattr(pdf_doc, "GetNumPages") else 0,
             "file_size_bytes": len(file_bytes),
         }
+        _rdlog(f" context ready: tmp_path={tmp_path} pages={context['total_pages']}")
 
         # ── Run the full pipeline ─────────────────────────────────────
-        # AccessibilityRemediationPipeline:
-        #   1. Validates with AccessibilityEnginePipeline
-        #   2. Remediates each auto_fixable issue via RemediatorService
-        #   3. Saves modified pdf_doc to <original>_remediated.pdf
-        #   4. Clears caches and re-validates
+        _rdlog(" creating pipeline ...")
         pipeline = get_remediation_pipeline()
+        _rdlog(" calling pipeline.run() ...")
         pipeline_result = pipeline.run(
             organization_id=organization_id,
             project_id=project_id,
@@ -471,6 +502,163 @@ async def orion_remediate_pdf(
         initial = pipeline_result.get("validation_result", {})
         revalidation = pipeline_result.get("revalidation_result", {})
         remediated_pdf_path = pipeline_result.get("remediated_pdf_path")
+
+        # ── Apply /ToUnicode encoding fix on the intermediary PDF ──────────
+        _enc_log = str(Path(__file__).resolve().parent.parent.parent.parent.parent / "encoding_fix.log")
+        with open(_enc_log, "a", encoding="utf-8") as _lf:
+            _lf.write(f"[REMEDIATE HIT] remediated_pdf_path={remediated_pdf_path!r}\n")
+            _lf.write(f"[REMEDIATE HIT] pipeline_result keys={list(pipeline_result.keys()) if pipeline_result else 'NONE'}\n")
+            _lf.write(f"[REMEDIATE HIT] exists={Path(remediated_pdf_path).exists() if remediated_pdf_path else 'N/A'}\n")
+        if remediated_pdf_path and Path(remediated_pdf_path).exists():
+            import subprocess as _sp3, sys as _sys3
+            _fixer3 = str(Path(__file__).resolve().parent.parent / "engines" / "font_encoding_fixer.py")
+            _enc_out = str(Path(remediated_pdf_path).with_suffix(".enc.pdf"))
+            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"fix start: {_fixer3}\ninput: {remediated_pdf_path}\noutput: {_enc_out}\n")
+            _r3 = _sp3.run(
+                [_sys3.executable, _fixer3, remediated_pdf_path, _enc_out],
+                capture_output=True, text=True, timeout=120
+            )
+            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"returncode: {_r3.returncode}\nstdout: {_r3.stdout}\nstderr: {_r3.stderr}\n")
+            if _r3.returncode == 0 and Path(_enc_out).exists() and Path(_enc_out).stat().st_size > 0:
+                remediated_pdf_path = _enc_out
+                pipeline_result["remediated_pdf_path"] = _enc_out
+            else:
+                with open(_enc_log, "a", encoding="utf-8") as _lf:
+                    _lf.write("FALLBACK: serving original\n")
+
+        # ---- Step 2: Remove PDFix visual badge overlays ----------------------
+        import subprocess as _sp6, sys as _sys6, os as _os6
+        _badge_fixer = str(Path(__file__).resolve().parent.parent / "engines" / "badge_remover.py")
+        if Path(_badge_fixer).exists():
+            _env6 = dict(_os6.environ)
+            _env6["PYTHONIOENCODING"] = "utf-8"
+            _badge_in = str(remediated_pdf_path)
+            _badge_base = _badge_in
+            for _suf6 in ("_ann.pdf", "_alt.pdf", ".enc.pdf", ".pdf"):
+                if _badge_base.endswith(_suf6):
+                    _badge_base = _badge_base[:-len(_suf6)]
+                    break
+            _badge_out = _badge_base + "_clean.pdf"
+            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"[BADGE-FIX] input={_badge_in!r} output={_badge_out!r}\n")
+            _r6 = _sp6.run(
+                [_sys6.executable, _badge_fixer, _badge_in, _badge_out],
+                capture_output=True, text=True, timeout=120, env=_env6
+            )
+            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"[BADGE-FIX] returncode={_r6.returncode}\n")
+                _lf.write(f"[BADGE-FIX] stdout={_r6.stdout}\n")
+                if _r6.stderr.strip():
+                    _lf.write(f"[BADGE-FIX] stderr={_r6.stderr}\n")
+            if _r6.returncode == 0 and Path(_badge_out).exists() and Path(_badge_out).stat().st_size > 0:
+                remediated_pdf_path = _badge_out
+                pipeline_result["remediated_pdf_path"] = _badge_out
+                with open(_enc_log, "a", encoding="utf-8") as _lf:
+                    _lf.write(f"[BADGE-FIX] SUCCESS -> {_badge_out}\n")
+            else:
+                with open(_enc_log, "a", encoding="utf-8") as _lf:
+                    _lf.write("[BADGE-FIX] FALLBACK: keeping previous pdf\n")
+        else:
+            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"[BADGE-FIX] fixer not found at {_badge_fixer!r} -- skipping\n")
+
+        # ---- Step 3: Fix tagged annotations ---------------------------------
+        import subprocess as _sp5, sys as _sys5, os as _os5
+        _ann_fixer = str(Path(__file__).resolve().parent.parent / "engines" / "tagged_annotations_fixer.py")
+        if Path(_ann_fixer).exists():
+            _env5 = dict(_os5.environ)
+            _env5["PYTHONIOENCODING"] = "utf-8"
+            _ann_in = str(remediated_pdf_path)
+            _ann_base = _ann_in
+            for _suf5 in ("_clean.pdf", "_alt.pdf", ".enc.pdf", ".pdf"):
+                if _ann_base.endswith(_suf5):
+                    _ann_base = _ann_base[:-len(_suf5)]
+                    break
+            _ann_out = _ann_base + "_ann.pdf"
+            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"[ANN-FIX] input={_ann_in!r} output={_ann_out!r}\n")
+            _r5 = _sp5.run(
+                [_sys5.executable, _ann_fixer, _ann_in, _ann_out],
+                capture_output=True, text=True, timeout=120, env=_env5
+            )
+            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"[ANN-FIX] returncode={_r5.returncode}\n")
+                _lf.write(f"[ANN-FIX] stdout={_r5.stdout}\n")
+                if _r5.stderr.strip():
+                    _lf.write(f"[ANN-FIX] stderr={_r5.stderr}\n")
+            if _r5.returncode == 0 and Path(_ann_out).exists() and Path(_ann_out).stat().st_size > 0:
+                remediated_pdf_path = _ann_out
+                pipeline_result["remediated_pdf_path"] = _ann_out
+                with open(_enc_log, "a", encoding="utf-8") as _lf:
+                    _lf.write(f"[ANN-FIX] SUCCESS -> {_ann_out}\n")
+            else:
+                with open(_enc_log, "a", encoding="utf-8") as _lf:
+                    _lf.write("[ANN-FIX] FALLBACK: keeping previous pdf\n")
+        else:
+            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"[ANN-FIX] fixer not found at {_ann_fixer!r} -- skipping\n")
+
+
+        # ── Step 4: Apply Alternate Text fix via Claude vision API (runs LAST — nothing touches structure tree after this) ──
+        if remediated_pdf_path and Path(remediated_pdf_path).exists():
+            import subprocess as _sp4, sys as _sys4, os as _os4
+            _alt_fixer = str(Path(__file__).resolve().parent.parent / "engines" / "run_fix_alt_text.py")
+            _alt_base = str(Path(remediated_pdf_path))
+            if _alt_base.endswith("_ann.pdf"):
+                _alt_out = _alt_base[:-len("_ann.pdf")] + "_alt.pdf"
+            elif _alt_base.endswith("_clean.pdf"):
+                _alt_out = _alt_base[:-len("_clean.pdf")] + "_alt.pdf"
+            elif _alt_base.endswith(".enc.pdf"):
+                _alt_out = _alt_base[:-len(".enc.pdf")] + "_alt.pdf"
+            elif _alt_base.endswith(".pdf"):
+                _alt_out = _alt_base[:-4] + "_alt.pdf"
+            else:
+                _alt_out = _alt_base + "_alt.pdf"
+            _env4 = dict(_os4.environ)
+            _env4["PYTHONIOENCODING"] = "utf-8"
+            # If api key not in env, try loading from .env file
+            # Handles "orion-clude-key" typo and both "=" and ":" separators
+            if not _env4.get("orion-claude-key"):
+                try:
+                    _dotenv_path = Path(__file__).resolve().parent.parent.parent.parent.parent / ".env"
+                    if _dotenv_path.exists():
+                        for _line in _dotenv_path.read_text(encoding="utf-8").splitlines():
+                            _line = _line.strip()
+                            if not _line or _line.startswith("#"):
+                                continue
+                            if "orion-" in _line.lower() and "key" in _line.lower():
+                                for _sep in ("=", ":"):
+                                    if _sep in _line:
+                                        _v = _line.split(_sep, 1)[1].strip().strip('"').strip("'")
+                                        if _v:
+                                            _env4["orion-claude-key"] = _v
+                                            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                                                _lf.write(f"[ALT-FIX] api_key loaded from .env\n")
+                                        break
+                except Exception as _e:
+                    with open(_enc_log, "a", encoding="utf-8") as _lf:
+                        _lf.write(f"[ALT-FIX] .env read error: {_e}\n")
+            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"[ALT-FIX] input={remediated_pdf_path!r} output={_alt_out!r}\n")
+            _r4 = _sp4.run(
+                [_sys4.executable, _alt_fixer, remediated_pdf_path, _alt_out],
+                capture_output=True, text=True, timeout=180, env=_env4
+            )
+            with open(_enc_log, "a", encoding="utf-8") as _lf:
+                _lf.write(f"[ALT-FIX] returncode={_r4.returncode}\n")
+                _lf.write(f"[ALT-FIX] stdout={_r4.stdout}\n")
+                if _r4.stderr.strip():
+                    _lf.write(f"[ALT-FIX] stderr={_r4.stderr}\n")
+            if _r4.returncode == 0 and Path(_alt_out).exists() and Path(_alt_out).stat().st_size > 0:
+                remediated_pdf_path = _alt_out
+                pipeline_result["remediated_pdf_path"] = _alt_out
+                with open(_enc_log, "a", encoding="utf-8") as _lf:
+                    _lf.write(f"[ALT-FIX] SUCCESS -> {_alt_out}\n")
+            else:
+                with open(_enc_log, "a", encoding="utf-8") as _lf:
+                    _lf.write("[ALT-FIX] FALLBACK: keeping enc.pdf\n")
 
         # ── Persist job record so status / download endpoints work ────
         _job_store[job_id] = {
@@ -518,6 +706,9 @@ async def orion_remediate_pdf(
         )
 
     except ValueError as exc:
+        import traceback
+        _rdlog(f" ValueError: {exc}")
+        print(traceback.format_exc())
         _job_store[job_id] = {
             "job_id": job_id,
             "status": "failed",
@@ -526,6 +717,9 @@ async def orion_remediate_pdf(
         }
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        import traceback
+        _rdlog(f" EXCEPTION {type(exc).__name__}: {exc}")
+        print(traceback.format_exc())
         _job_store[job_id] = {
             "job_id": job_id,
             "status": "failed",
@@ -630,8 +824,33 @@ async def download_remediated_pdf(job_id: str):
     stem = Path(original_filename).stem
     download_name = f"{stem}_remediated.pdf"
 
+    # ── /ToUnicode fix via subprocess (bypasses __pycache__ / import issues) ──
+    serve_path = pdf_path
+    _rdlog("[ROUTER] download: launching run_fix_encoding subprocess")
+    try:
+        import sys as _sys, subprocess as _sp
+        _script = str(Path(__file__).parent.parent / "engines" / "run_fix_encoding.py")
+        patched_path = str(Path(pdf_path).with_suffix(".tounicode.pdf"))
+        _rdlog(f"[ROUTER] download: script={_script!r}  input={pdf_path!r}  output={patched_path!r}")
+        _proc = _sp.run(
+            [_sys.executable, _script, pdf_path, patched_path],
+            capture_output=True, text=True, timeout=120
+        )
+        _rdlog(f"[ROUTER] download: subprocess returncode={_proc.returncode}")
+        _rdlog(f"[ROUTER] download: subprocess stdout={_proc.stdout.strip()!r}")
+        if _proc.stderr.strip():
+            _rdlog(f"[ROUTER] download: subprocess stderr={_proc.stderr.strip()!r}")
+        if _proc.returncode == 0 and Path(patched_path).exists() and Path(patched_path).stat().st_size > 0:
+            serve_path = patched_path
+            logger.info("download: ToUnicode patched → %s", patched_path)
+        else:
+            _rdlog("[ROUTER] download: subprocess failed or no output — serving original")
+    except Exception as _tu_exc:
+        import traceback as _tb
+        _rdlog(f"[ROUTER] download: subprocess ERROR: {_tu_exc}\n{_tb.format_exc()}")
+        logger.warning("download: inject_tounicode failed: %s", _tu_exc, exc_info=True)
     return FileResponse(
-        path=pdf_path,
+        path=serve_path,
         media_type="application/pdf",
         filename=download_name,
     )

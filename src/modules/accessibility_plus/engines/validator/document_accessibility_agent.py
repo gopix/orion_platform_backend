@@ -2,7 +2,7 @@
 Document Accessibility Agent - Validates core PDF document accessibility features.
 
 Checks include:
-- Title: Document has a meaningful title in BOTH Info dictionary AND XMP stream
+- Title: Document has a meaningful title
 - Language: Document language is properly set
 - Metadata: Document contains metadata
 - Tagged PDF: Document has proper structure tree
@@ -16,14 +16,6 @@ Uses PDFix SDK for validation:
     pdf_doc.GetInfo("Title")
     pdf_doc.GetPdfStandard()
     pdf_doc.GetBookmarkRoot()
-
-Title check note:
-    Adobe Acrobat's Accessibility Checker "Title" test reads dc:title from the
-    XMP metadata stream, NOT the Info dictionary /Title key.  A PDF can have a
-    perfectly valid /Title in the Info dict and still fail Acrobat's check if
-    the XMP stream is absent or lacks <dc:title>.
-    Therefore _check_title() validates BOTH sources and fails (auto_fixable=True)
-    if either is missing, so the remediator knows to write XMP dc:title.
 """
 
 from __future__ import annotations
@@ -139,77 +131,26 @@ class DocumentAccessibilityAgent(BaseAccessibilityValidatorAgent):
 
     @staticmethod
     def _check_title(pdf_doc, check_code: str) -> ValidationIssue:
-        """
-        Check that the document title satisfies ALL THREE conditions Adobe requires.
-
-        Adobe Acrobat's "Title" accessibility check passes only when:
-          1. Info /Title         – non-empty title in the Info dictionary.
-          2. XMP dc:title        – title present in the XMP metadata stream.
-                                   Acrobat reads from XMP, not the Info dict.
-          3. DisplayDocTitle     – /ViewerPreferences /DisplayDocTitle true.
-                                   Without this flag the title is never shown
-                                   in the window title bar and Acrobat fails
-                                   "Title" even when dc:title is in XMP.
-
-        Any missing condition → FAIL, auto_fixable=True so the remediator
-        sets all three in one pass.
-        """
+        """Check if document has a title set."""
         try:
-            # ── 1. Info dictionary ────────────────────────────────────
-            title = (pdf_doc.GetInfo("Title") or "").strip()
-            has_info_title = bool(title)
-
-            # ── 2. XMP dc:title ───────────────────────────────────────
-            has_xmp_title = _has_xmp_dc_title(pdf_doc)
-
-            # ── 3. ViewerPreferences / DisplayDocTitle ────────────────
-            has_display_doc_title = _has_display_doc_title(pdf_doc)
-
-            # ── 4. Evaluate ───────────────────────────────────────────
-            all_ok = has_info_title and has_xmp_title and has_display_doc_title
-
-            if all_ok:
-                return DocumentAccessibilityAgent._issue(
-                    rule_id=check_code,
-                    severity=Severity.MEDIUM,
-                    message=(
-                        f"Document title is fully configured: '{title}' "
-                        f"(Info dict + XMP dc:title + DisplayDocTitle)"
-                    ),
-                    recommendation="Title is correctly set for Adobe accessibility compliance",
-                    status=ValidationStatus.PASS,
-                    auto_fixable=True,
-                )
-
-            # Build a specific message listing what is missing
-            missing: list[str] = []
-            if not has_info_title:
-                missing.append("Info /Title not set")
-            if not has_xmp_title:
-                missing.append("XMP dc:title missing (Adobe reads from XMP)")
-            if not has_display_doc_title:
-                missing.append(
-                    "ViewerPreferences /DisplayDocTitle not true "
-                    "(title won't appear in title bar)"
-                )
-
-            title_display = f"'{title}'" if has_info_title else "(none)"
+            title = pdf_doc.GetInfo("Title")
+            has_title = bool(title and title.strip())
             return DocumentAccessibilityAgent._issue(
                 rule_id=check_code,
                 severity=Severity.MEDIUM,
                 message=(
-                    f"Document title {title_display} is incomplete for Adobe accessibility. "
-                    f"Missing: {'; '.join(missing)}."
+                    f"Document has title: '{title}'"
+                    if has_title
+                    else "Document does not have a title set"
                 ),
                 recommendation=(
-                    "Set Info /Title, add XMP dc:title, and enable "
-                    "ViewerPreferences /DisplayDocTitle — all three are required "
-                    "for Adobe Acrobat's Title accessibility check to pass."
+                    "Title is present" 
+                    if has_title 
+                    else "Add a descriptive title to the PDF document"
                 ),
-                status=ValidationStatus.FAIL,
-                auto_fixable=True,
+                status=ValidationStatus.PASS if has_title else ValidationStatus.FAIL,
+                auto_fixable=True,  
             )
-
         except Exception as exc:
             return DocumentAccessibilityAgent._issue(
                 rule_id=check_code,
@@ -324,6 +265,7 @@ class DocumentAccessibilityAgent(BaseAccessibilityValidatorAgent):
     def _check_pdfua_flag(pdf_doc, check_code: str) -> ValidationIssue:
         """Check if document is marked as PDF/UA compliant."""
         try:
+            # Import PDFix constants
             from pdfixsdk.Pdfix import kPdfStandardPdfUA
 
             pdf_standard = pdf_doc.GetPdfStandard()
@@ -404,71 +346,3 @@ class DocumentAccessibilityAgent(BaseAccessibilityValidatorAgent):
                 recommendation="Check PDF integrity and retry",
                 status=ValidationStatus.FAIL,
             )
-
-
-# ---------------------------------------------------------------------------
-# Module-level XMP helper (used by _check_title)
-# ---------------------------------------------------------------------------
-
-def _has_display_doc_title(pdf_doc: Any) -> bool:
-    """
-    Return True if /ViewerPreferences /DisplayDocTitle is set to true.
-
-    Adobe Acrobat's "Title" accessibility check requires the document title
-    to be displayed in the window title bar.  This is controlled by the
-    /DisplayDocTitle boolean in the /ViewerPreferences dictionary of the
-    PDF catalog.  When absent or false, Acrobat fails "Title" even if
-    dc:title is correctly set in XMP.
-    """
-    try:
-        _DISPLAY_DOC_TITLE_CANDIDATES = [
-            "kViewerPrefDisplayDocTitle",
-            "kPdfViewerPrefDisplayDocTitle",
-            "PdfViewerPrefDisplayDocTitle",
-        ]
-        for const_name in _DISPLAY_DOC_TITLE_CANDIDATES:
-            try:
-                from pdfixsdk import Pdfix as _pdfix_module  # type: ignore[import]
-                flag = getattr(_pdfix_module, const_name, None)
-                if flag is not None:
-                    current = pdf_doc.GetViewerPreferences()
-                    return bool(current & int(flag))
-            except Exception:
-                continue
-        # If we can't read the flag, assume it's not set (conservative).
-        return False
-    except Exception:
-        return False
-
-
-def _has_xmp_dc_title(pdf_doc: Any) -> bool:
-    """
-    Return True if the document's XMP metadata stream contains a <dc:title> element.
-
-    Adobe Acrobat's Accessibility Checker reads the document title from
-    XMP dc:title, NOT from the Info dictionary /Title key.  This helper
-    lets _check_title() detect the mismatch so the remediator can fix it.
-
-    Returns False (not a crash) if GetMetadata() is unavailable or the XMP
-    stream is absent, empty, or malformed — all of which mean Acrobat will
-    fail its Title check.
-    """
-    try:
-        if not hasattr(pdf_doc, "GetMetadata"):
-            return False
-
-        raw = pdf_doc.GetMetadata()
-        if not raw:
-            return False
-
-        if isinstance(raw, (bytes, bytearray)):
-            xmp_str = raw.decode("utf-8", errors="replace")
-        elif isinstance(raw, str):
-            xmp_str = raw
-        else:
-            return False
-
-        return "<dc:title>" in xmp_str
-
-    except Exception:
-        return False
