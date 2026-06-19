@@ -6,7 +6,6 @@ import tempfile as _tempfile
 from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
-from typing import Any
 
 from src.core.logger import get_logger
 from .accesibility_engine_pipeline import AccessibilityEnginePipeline
@@ -14,15 +13,13 @@ from .remediator.remediator_service import RemediatorService
 from .remediator.base_remediator_agent import RemediationResult
 from .font_encoding_fixer import inject_tounicode
 from pypdf import PdfWriter
-from pypdf.generic import BooleanObject, DictionaryObject, NameObject
+from pypdf.generic import BooleanObject, DictionaryObject, NameObject, DecodedStreamObject
 
 logger = get_logger(__name__)
 
-# Debug log file — written to project root so it's always findable
 _DEBUG_LOG = Path(__file__).parent.parent.parent.parent.parent / "pipeline_debug.log"
 
 def _dlog(*args):
-    """Write a debug line to file AND stderr (stderr is always visible in uvicorn)."""
     msg = " ".join(str(a) for a in args)
     try:
         with open(_DEBUG_LOG, "a", encoding="utf-8") as f:
@@ -157,14 +154,12 @@ def _save_remediated_pdf(context):
             tmp_size = _os.path.getsize(tmp_path)
             _dlog(f"[PIPELINE]   tmp file size={tmp_size} bytes")
 
-            # PDFix may hold a lock on tmp_path — copy it first, then fix the copy
-            import subprocess as _subp, sys as _sys, shutil as _sh
+            import subprocess as _subp, shutil as _sh
             _fixer = str(Path(__file__).parent / "font_encoding_fixer.py")
             _copy_path = tmp_path + "_copy.pdf"
-            _dlog(f"[PIPELINE]   copying {tmp_path!r} → {_copy_path!r}")
+            _dlog(f"[PIPELINE]   copying {tmp_path!r} -> {_copy_path!r}")
             _sh.copy2(tmp_path, _copy_path)
-            _dlog(f"[PIPELINE]   fixer script={_fixer}")
-            _dlog(f"[PIPELINE]   running: {_sys.executable} {_fixer} {_copy_path} {str(remediated_path)}")
+            _dlog(f"[PIPELINE]   running font_encoding_fixer ...")
             _proc = _subp.run(
                 [_sys.executable, _fixer, _copy_path, str(remediated_path)],
                 capture_output=True, text=True, timeout=120
@@ -184,7 +179,6 @@ def _save_remediated_pdf(context):
                 _dlog("[PIPELINE]   fixer failed — copying original")
                 _sh.copy2(tmp_path, str(remediated_path))
                 tu = {"fonts_patched": 0, "save_success": True}
-            _dlog(f"[PIPELINE]   tu={tu}")
 
         finally:
             try:
@@ -193,9 +187,19 @@ def _save_remediated_pdf(context):
             except OSError as e:
                 _dlog(f"[PIPELINE]   WARNING: could not delete temp: {e}")
 
+        # Step 1 — set DisplayDocTitle + inject PDF/UA identifier + dc:title
         _dlog("[PIPELINE]   calling _set_display_doc_title ...")
         _set_display_doc_title(str(remediated_path))
         _dlog("[PIPELINE]   _set_display_doc_title done")
+
+        # Step 2 — embed font programs (pikepdf+fonttools, tag-safe)
+        _dlog("[PIPELINE]   calling embed_standard_fonts ...")
+        try:
+            from .font_encoding_fixer import embed_standard_fonts
+            fonts_ok = embed_standard_fonts(str(remediated_path))
+            _dlog(f"[PIPELINE]   embed_standard_fonts -> {fonts_ok}")
+        except Exception as fe:
+            _dlog(f"[PIPELINE]   embed_standard_fonts ERROR: {fe}")
 
         final_size = _os.path.getsize(str(remediated_path)) if _os.path.exists(str(remediated_path)) else "MISSING"
         _dlog(f"[PIPELINE]   final file size={final_size}")
@@ -215,15 +219,59 @@ def _save_remediated_pdf(context):
 
 
 def _set_display_doc_title(pdf_path: str) -> None:
+    """Set DisplayDocTitle, inject PDF/UA-1 identifier and dc:title into XMP."""
     _dlog(f"[PIPELINE] _set_display_doc_title: {pdf_path}")
     try:
         pdf_bytes = Path(pdf_path).read_bytes()
         writer = PdfWriter(clone_from=_io.BytesIO(pdf_bytes))
         root = writer._root_object
+
+        # DisplayDocTitle
         vp_key = NameObject("/ViewerPreferences")
         if vp_key not in root:
             root[vp_key] = DictionaryObject()
         root[vp_key][NameObject("/DisplayDocTitle")] = BooleanObject(True)
+
+        # Resolve document title: DocInfo /Title → filename fallback
+        doc_title = "Untitled Document"
+        try:
+            info = writer.metadata
+            if info and info.get("/Title"):
+                doc_title = str(info["/Title"])
+            else:
+                doc_title = Path(pdf_path).stem.replace("_", " ").replace("-", " ")
+        except Exception:
+            pass
+
+        # Inject XMP with PDF/UA-1 identifier + dc:title
+        xmp_data = (
+            "<?xpacket begin='\xef\xbb\xbf' id='W5M0MpCehiHzreSzNTczkc9d'?>\n"
+            "<x:xmpmeta xmlns:x='adobe:ns:meta/'>\n"
+            "  <rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'>\n"
+            "    <rdf:Description rdf:about=''\n"
+            "        xmlns:pdfuaid='http://www.aiim.org/pdfua/ns/id/'>\n"
+            "      <pdfuaid:part>1</pdfuaid:part>\n"
+            "    </rdf:Description>\n"
+            "    <rdf:Description rdf:about=''\n"
+            "        xmlns:dc='http://purl.org/dc/elements/1.1/'>\n"
+            "      <dc:title>\n"
+            "        <rdf:Alt>\n"
+            f"          <rdf:li xml:lang='x-default'>{doc_title}</rdf:li>\n"
+            "        </rdf:Alt>\n"
+            "      </dc:title>\n"
+            "    </rdf:Description>\n"
+            "  </rdf:RDF>\n"
+            "</x:xmpmeta>\n"
+            "<?xpacket end='w'?>"
+        )
+        xmp_stream = DecodedStreamObject()
+        xmp_stream.set_data(xmp_data.encode("utf-8"))
+        xmp_stream.update({
+            NameObject("/Type"):    NameObject("/Metadata"),
+            NameObject("/Subtype"): NameObject("/XML"),
+        })
+        root[NameObject("/Metadata")] = writer._add_object(xmp_stream)
+
         with open(pdf_path, "wb") as fh:
             writer.write(fh)
         _dlog("[PIPELINE] _set_display_doc_title: done")

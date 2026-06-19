@@ -29,23 +29,13 @@ output file.  It:
    are patched exactly once.
 5. Writes the fixed PDF to ``output_path``.
 
-Usage
------
-    from font_encoding_fixer import inject_tounicode
-
-    inject_tounicode(
-        input_path="remediated.pdf",
-        output_path="remediated_fixed.pdf",
-    )
-
-Integration with the pipeline
-------------------------------
-Call this function as the final post-processing step, after PDFix has
-finished and after the DisplayDocTitle pypdf patch has been applied:
-
-    # accessibility_remediation_pipeline.py  (excerpt)
-    _patch_display_doc_title(tmp_path, tmp_path)   # existing step
-    inject_tounicode(tmp_path, output_path)         # new step
+Font embedding
+--------------
+``embed_standard_fonts()`` embeds font programs for standard Type1 fonts
+(Helvetica, Times, Courier) using Windows TrueType equivalents (Arial etc.).
+It uses pikepdf + fonttools to operate at the PDF object level, preserving
+all tag structure, language attributes, and XMP metadata intact.
+This avoids the tag-destruction problem caused by Ghostscript pdfwrite.
 """
 
 from __future__ import annotations
@@ -113,7 +103,6 @@ _ZAPF_MAP: Dict[int, int] = {
 # ---------------------------------------------------------------------------
 
 def _codec_map(codec: str) -> Dict[int, int]:
-    """Build a byte→Unicode mapping for a Python codec (e.g. 'cp1252')."""
     m: Dict[int, int] = {}
     for b in range(0x20, 0x100):
         try:
@@ -124,24 +113,16 @@ def _codec_map(codec: str) -> Dict[int, int]:
     return m
 
 
-# Pre-built maps (computed once at import time)
-_WINANSI_MAP:   Dict[int, int] = _codec_map("cp1252")
-_MACROMAN_MAP:  Dict[int, int] = _codec_map("mac_roman")
+_WINANSI_MAP:  Dict[int, int] = _codec_map("cp1252")
+_MACROMAN_MAP: Dict[int, int] = _codec_map("mac_roman")
 
 
 def _build_cmap_stream(cmap_name: str, mapping: Dict[int, int]) -> bytes:
-    """
-    Serialize a {byte_code: unicode_codepoint} mapping as a PDF ToUnicode CMap.
-
-    PDF spec limits each bfchar block to 100 entries; we chunk accordingly.
-    """
     items = sorted(mapping.items())
     if not items:
         raise ValueError("CMap mapping must not be empty")
-
     lo = items[0][0]
     hi = items[-1][0]
-
     lines: list[str] = [
         "/CIDInit /ProcSet findresource begin",
         "12 dict begin",
@@ -154,15 +135,13 @@ def _build_cmap_stream(cmap_name: str, mapping: Dict[int, int]) -> bytes:
         f"<{lo:02X}> <{hi:02X}>",
         "endcodespacerange",
     ]
-
     chunk_size = 100
     for i in range(0, len(items), chunk_size):
-        block = items[i : i + chunk_size]
+        block = items[i: i + chunk_size]
         lines.append(f"{len(block)} beginbfchar")
         for code, ucp in block:
             lines.append(f"<{code:02X}> <{ucp:04X}>")
         lines.append("endbfchar")
-
     lines += [
         "endcmap",
         "CMapName currentdict /CMap defineresource pop",
@@ -177,36 +156,27 @@ def _build_cmap_stream(cmap_name: str, mapping: Dict[int, int]) -> bytes:
 # ---------------------------------------------------------------------------
 
 def _select_cmap(font_dict) -> tuple[str, bytes] | None:
-    """
-    Return (cmap_name, cmap_bytes) for the given font dictionary, or None
-    if the font type is not one we know how to handle.
-    """
     base  = str(font_dict.get("/BaseFont", ""))
     enc   = str(font_dict.get("/Encoding", ""))
     stype = str(font_dict.get("/Subtype", ""))
 
-    # ZapfDingbats has its own standard encoding
     if "ZapfDingbats" in base or "Dingbat" in base:
         return "ZapfDingbats-UCS", _build_cmap_stream("ZapfDingbats-UCS", _ZAPF_MAP)
-
     if "MacRoman" in enc:
         return "MacRoman-UCS", _build_cmap_stream("MacRoman-UCS", _MACROMAN_MAP)
-
-    # WinAnsiEncoding, or any bare Type1 (WinAnsi is the safe default)
     if "WinAnsi" in enc or stype == "/Type1":
         return "WinAnsi-UCS", _build_cmap_stream("WinAnsi-UCS", _WINANSI_MAP)
-
     return None
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# ToUnicode injection
 # ---------------------------------------------------------------------------
 
-def inject_tounicode(input_path: str | Path, output_path: str | Path, force_replace: bool = True) -> dict:
+def inject_tounicode(input_path: str | Path, output_path: str | Path) -> dict:
     """
-    Clone ``input_path``, inject /ToUnicode CMap entries into every font that
-    lacks one, and write the result to ``output_path``.
+    Clone input_path, inject /ToUnicode CMap entries into every font that
+    lacks one, and write the result to output_path.
     """
     input_path  = Path(input_path)
     output_path = Path(output_path)
@@ -222,22 +192,19 @@ def inject_tounicode(input_path: str | Path, output_path: str | Path, force_repl
         print(f"[font_encoding_fixer] ERROR cloning PDF: {e}")
         raise
 
-    patched:  int = 0
-    skipped:  int = 0
-    unknown:  int = 0
+    patched = 0
+    skipped = 0
+    unknown = 0
     details: list[str] = []
     _seen: set[int] = set()
 
     for page_num, page in enumerate(writer.pages):
         resources = page.get("/Resources")
         if resources is None:
-            print(f"[font_encoding_fixer]   page {page_num}: no /Resources")
             continue
         resources = resources.get_object()
-
         font_dict = resources.get("/Font")
         if font_dict is None:
-            print(f"[font_encoding_fixer]   page {page_num}: no /Font in resources")
             continue
         font_dict = font_dict.get_object()
 
@@ -246,7 +213,6 @@ def inject_tounicode(input_path: str | Path, output_path: str | Path, force_repl
         for font_name, font_ref in font_dict.items():
             font = font_ref.get_object()
             obj_key = id(font)
-
             if obj_key in _seen:
                 print(f"[font_encoding_fixer]     {font_name}: already seen (shared object) — skip")
                 continue
@@ -259,30 +225,20 @@ def inject_tounicode(input_path: str | Path, output_path: str | Path, force_repl
 
             print(f"[font_encoding_fixer]     {font_name}: BaseFont={base} Encoding={enc} Subtype={stype} HasToUnicode={has_tu}")
 
-            if has_tu and not force_replace:
-                print(f"[font_encoding_fixer]     {font_name}: HasToUnicode=True, skipping")
+            if has_tu:
                 skipped += 1
                 continue
-            if has_tu and force_replace:
-                # PDFix adds broken ToUnicode — check if we have a good replacement
-                result = _select_cmap(font)
-                if result is None:
-                    print(f"[font_encoding_fixer]     {font_name}: HasToUnicode=True, no replacement known — keeping existing")
-                    skipped += 1
-                    continue
-                print(f"[font_encoding_fixer]     {font_name}: HasToUnicode=True — REPLACING with known-good CMap")
-            else:
-                result = _select_cmap(font)
+
+            result = _select_cmap(font)
             if result is None:
-                print(f"[font_encoding_fixer]     {font_name}: _select_cmap returned None — UNKNOWN encoding, cannot patch")
+                print(f"[font_encoding_fixer]     {font_name}: unknown encoding — cannot patch")
                 unknown += 1
                 continue
 
             cmap_name, cmap_bytes = result
             stream = DecodedStreamObject()
             stream.set_data(cmap_bytes)
-            ref = writer._add_object(stream)
-            font[NameObject("/ToUnicode")] = ref
+            font[NameObject("/ToUnicode")] = writer._add_object(stream)
 
             msg = f"Injected {cmap_name} into {font_name} ({base})"
             details.append(msg)
@@ -298,23 +254,13 @@ def inject_tounicode(input_path: str | Path, output_path: str | Path, force_repl
 
     out_size = output_path.stat().st_size if output_path.exists() else "N/A"
     print(f"[font_encoding_fixer] Written to {output_path} (size={out_size})")
+    logger.info("font_encoding_fixer: done — patched=%d skipped=%d unknown=%d -> %s", patched, skipped, unknown, output_path)
 
-    logger.info(
-        "font_encoding_fixer: done — patched=%d skipped=%d unknown=%d → %s",
-        patched, skipped, unknown, output_path,
-    )
-    return {
-        "fonts_patched": patched,
-        "fonts_skipped": skipped,
-        "fonts_unknown": unknown,
-        "details": details,
-    }
+    return {"fonts_patched": patched, "fonts_skipped": skipped, "fonts_unknown": unknown, "details": details}
+
 
 def inject_into_writer(writer: PdfWriter) -> dict:
-    """
-    Same logic as inject_tounicode() but operates on an already-open PdfWriter.
-    Use this when the caller already holds a writer to avoid a second read-write pass.
-    """
+    """Same logic as inject_tounicode() but on an already-open PdfWriter."""
     patched = 0; skipped = 0; unknown = 0; details = []
     _seen: set[int] = set()
 
@@ -348,8 +294,168 @@ def inject_into_writer(writer: PdfWriter) -> dict:
             details.append(f"Injected {cmap_name} into {font_name}")
             patched += 1
 
-    return {"fonts_patched": patched, "fonts_skipped": skipped,
-            "fonts_unknown": unknown, "details": details}
+    return {"fonts_patched": patched, "fonts_skipped": skipped, "fonts_unknown": unknown, "details": details}
+
+
+# ---------------------------------------------------------------------------
+# Font program embedding (pikepdf + fonttools)
+# Preserves PDF tag structure — safe for PDF/UA documents.
+# DO NOT use Ghostscript pdfwrite for this; it strips tags.
+# ---------------------------------------------------------------------------
+
+# Maps standard PDF font names to Windows TrueType equivalents
+_FONT_FILE_MAP = {
+    "/Helvetica":             r"C:\Windows\Fonts\arial.ttf",
+    "/Helvetica-Bold":        r"C:\Windows\Fonts\arialbd.ttf",
+    "/Helvetica-Oblique":     r"C:\Windows\Fonts\ariali.ttf",
+    "/Helvetica-BoldOblique": r"C:\Windows\Fonts\arialbi.ttf",
+    "/Times-Roman":           r"C:\Windows\Fonts\times.ttf",
+    "/Times-Bold":            r"C:\Windows\Fonts\timesbd.ttf",
+    "/Times-Italic":          r"C:\Windows\Fonts\timesi.ttf",
+    "/Times-BoldItalic":      r"C:\Windows\Fonts\timesbi.ttf",
+    "/Courier":               r"C:\Windows\Fonts\cour.ttf",
+    "/Courier-Bold":          r"C:\Windows\Fonts\courbd.ttf",
+    "/Courier-Oblique":       r"C:\Windows\Fonts\couri.ttf",
+    "/Courier-BoldOblique":   r"C:\Windows\Fonts\courbi.ttf",
+}
+
+
+def embed_standard_fonts(pdf_path) -> bool:
+    """
+    Embed font programs for standard Type1 fonts using Windows TrueType
+    equivalents (Arial for Helvetica etc.).
+
+    Uses pikepdf + fonttools — operates at the PDF object level so all
+    tags, language attributes, and XMP metadata are fully preserved.
+
+    Returns True if at least one font was embedded, False otherwise.
+    """
+    from io import BytesIO
+    import pikepdf
+
+    try:
+        from fontTools import ttLib   # official package name (capital T)
+    except ImportError:
+        try:
+            from fonttools import ttLib  # fallback for case-insensitive installs
+        except ImportError:
+            print("[embed_fonts] fonttools not installed — run: pip install fonttools")
+            return False
+
+    pdf_path = Path(pdf_path)
+
+    try:
+        pdf = pikepdf.open(pdf_path, allow_overwriting_input=True)
+        modified = False
+        seen: set[int] = set()
+
+        for page in pdf.pages:
+            res = page.get("/Resources")
+            if not res:
+                continue
+            fonts = res.get("/Font")
+            if not fonts:
+                continue
+
+            for name, font_ref in fonts.items():
+                font = font_ref
+                fid = id(font)
+                if fid in seen:
+                    continue
+                seen.add(fid)
+
+                # Skip if font program already present
+                if "/FontDescriptor" in font:
+                    desc = font["/FontDescriptor"]
+                    if any(k in desc for k in ["/FontFile", "/FontFile2", "/FontFile3"]):
+                        print(f"[embed_fonts] {name}: already embedded — skip")
+                        continue
+
+                base_font = str(font.get("/BaseFont", ""))
+                font_file = _FONT_FILE_MAP.get(base_font)
+                if not font_file or not Path(font_file).exists():
+                    print(f"[embed_fonts] {name} ({base_font}): no substitute found — skip")
+                    continue
+
+                # Load TTF and serialise to bytes
+                tt = ttLib.TTFont(font_file)
+                buf = BytesIO()
+                tt.save(buf)
+                font_data = buf.getvalue()
+
+                # Read actual metrics from the TTF
+                head = tt["head"]
+                os2  = tt.get("OS/2")
+                units = head.unitsPerEm
+                sc    = 1000.0 / units
+                asc   = int(round(os2.sTypoAscender  * sc)) if os2 else 728
+                desc_ = int(round(os2.sTypoDescender * sc)) if os2 else -210
+                caph  = int(round(getattr(os2, "sCapHeight", 0) * sc)) if (os2 and getattr(os2, "sCapHeight", 0)) else 716
+
+                def _R(v):  # pikepdf uses Real, not Decimal
+                    return pikepdf.Real(str(int(v)))
+
+                # Get per-character widths from TTF (required for simple TrueType fonts).
+                # Without FirstChar/LastChar/Widths, PAC throws "'FirstChar' not defined".
+                first_char, last_char = 32, 255
+                _cmap  = tt.getBestCmap() or {}
+                _hmtx  = tt["hmtx"].metrics
+                _notdef_w = int(round(_hmtx.get(".notdef", (500, 0))[0] * sc))
+                widths = []
+                for _cp in range(first_char, last_char + 1):
+                    _gn = _cmap.get(_cp)
+                    widths.append(int(round(_hmtx[_gn][0] * sc)) if _gn and _gn in _hmtx else _notdef_w)
+
+                # Change Subtype to TrueType (FontFile2 is the correct key for TTF).
+                # Also add FirstChar/LastChar/Widths — mandatory for simple TrueType fonts.
+                font["/Subtype"]   = pikepdf.Name("/TrueType")
+                font["/FirstChar"] = pikepdf.Integer(first_char)
+                font["/LastChar"]  = pikepdf.Integer(last_char)
+                font["/Widths"]    = pikepdf.Array([pikepdf.Integer(w) for w in widths])
+
+                # Build FontDescriptor
+                descriptor = pikepdf.Dictionary(
+                    Type=pikepdf.Name("/FontDescriptor"),
+                    FontName=pikepdf.Name(base_font),
+                    Flags=pikepdf.Integer(32),
+                    FontBBox=pikepdf.Array([
+                        _R(int(round(head.xMin * sc))),
+                        _R(int(round(head.yMin * sc))),
+                        _R(int(round(head.xMax * sc))),
+                        _R(int(round(head.yMax * sc))),
+                    ]),
+                    ItalicAngle=_R(0),
+                    Ascent=_R(asc),
+                    Descent=_R(desc_),
+                    CapHeight=_R(caph),
+                    StemV=_R(80),
+                )
+
+                font_stream = pikepdf.Stream(pdf, font_data)
+                font_stream["/Length1"] = pikepdf.Integer(len(font_data))
+                descriptor["/FontFile2"] = font_stream
+                font["/FontDescriptor"] = pdf.make_indirect(descriptor)
+                modified = True
+                print(f"[embed_fonts] Embedded {Path(font_file).name} for {base_font}")
+
+        if modified:
+            tmp_path = pdf_path.with_suffix(".embed_tmp.pdf")
+            pdf.save(tmp_path)
+            pdf.close()
+            import shutil
+            shutil.move(str(tmp_path), str(pdf_path))
+            print(f"[embed_fonts] Saved with embedded fonts: {pdf_path}")
+        else:
+            pdf.close()
+            print(f"[embed_fonts] No fonts needed embedding")
+
+        return modified
+
+    except Exception as e:
+        import traceback
+        print(f"[embed_fonts] Exception: {e}")
+        traceback.print_exc()
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -359,13 +465,12 @@ def inject_into_writer(writer: PdfWriter) -> dict:
 if __name__ == "__main__":
     import sys
     import json
+    import logging
 
     if len(sys.argv) != 3:
         print("Usage: python font_encoding_fixer.py <input.pdf> <output.pdf>")
         sys.exit(1)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    force = "--no-force" not in sys.argv
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    result = inject_tounicode(args[0], args[1], force_replace=force)
+    result = inject_tounicode(sys.argv[1], sys.argv[2])
     print(json.dumps(result, indent=2))
