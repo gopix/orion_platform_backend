@@ -201,6 +201,16 @@ def _save_remediated_pdf(context):
         except Exception as fe:
             _dlog(f"[PIPELINE]   embed_standard_fonts ERROR: {fe}")
 
+        # Step 3 — fix low-contrast text colours (WCAG 1.4.3)
+        _dlog("[PIPELINE]   calling fix_text_contrast ...")
+        try:
+            from .contrast_fixer import fix_text_contrast
+            contrast_stats = fix_text_contrast(str(remediated_path))
+            _dlog(f"[PIPELINE]   fix_text_contrast -> changes={contrast_stats['total_changes']}")
+        except Exception as ce:
+            import traceback
+            _dlog(f"[PIPELINE]   fix_text_contrast ERROR: {ce}")
+            _dlog(traceback.format_exc())
         final_size = _os.path.getsize(str(remediated_path)) if _os.path.exists(str(remediated_path)) else "MISSING"
         _dlog(f"[PIPELINE]   final file size={final_size}")
 

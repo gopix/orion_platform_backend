@@ -16,5 +16,5 @@ pypdf==6.0.0
 openpyxl==3.1.5
 PyMuPDF==1.27.2.3
 anthropic==0.109.2
-Version== 4.63.0
+fontTools== 4.63.0
 pikepdf==10.9.0
