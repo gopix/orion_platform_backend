@@ -211,6 +211,58 @@ def _save_remediated_pdf(context):
             import traceback
             _dlog(f"[PIPELINE]   fix_text_contrast ERROR: {ce}")
             _dlog(traceback.format_exc())
+
+        # Step 4 — fix missing Link annotations + <Link> structure elements (PDF/UA)
+        # Runs as subprocess (same pattern as font_encoding_fixer) for isolation.
+        _dlog("[PIPELINE]   calling run_link_fix.py ...")
+        try:
+            _link_runner = str(Path(__file__).parent / "run_link_fix.py")
+            _link_proc = _subp.run(
+                [_sys.executable, _link_runner, str(remediated_path)],
+                capture_output=True, text=True, timeout=60
+            )
+            _dlog(f"[PIPELINE]   run_link_fix returncode={_link_proc.returncode}")
+            _dlog(f"[PIPELINE]   run_link_fix stdout={_link_proc.stdout.strip()!r}")
+            if _link_proc.stderr.strip():
+                _dlog(f"[PIPELINE]   run_link_fix stderr={_link_proc.stderr.strip()!r}")
+        except Exception as le:
+            import traceback
+            _dlog(f"[PIPELINE]   run_link_fix ERROR: {le}")
+            _dlog(traceback.format_exc())
+        # Step 5 — fix wrongly-artifacted content (PDF/UA)
+        _dlog("[PIPELINE]   calling run_artifact_fix.py ...")
+        try:
+            _artifact_runner = str(Path(__file__).parent / "run_artifact_fix.py")
+            _artifact_proc = _subp.run(
+                [_sys.executable, _artifact_runner, str(remediated_path)],
+                capture_output=True, text=True, timeout=60
+            )
+            _dlog(f"[PIPELINE]   run_artifact_fix returncode={_artifact_proc.returncode}")
+            _dlog(f"[PIPELINE]   run_artifact_fix stdout={_artifact_proc.stdout.strip()!r}")
+            if _artifact_proc.stderr.strip():
+                _dlog(f"[PIPELINE]   run_artifact_fix stderr={_artifact_proc.stderr.strip()!r}")
+        except Exception as ae:
+            import traceback
+            _dlog(f"[PIPELINE]   run_artifact_fix ERROR: {ae}")
+            _dlog(traceback.format_exc())
+
+        # Step 6 — fix heading tags (PDF/UA Presence of headings)
+        _dlog("[PIPELINE]   calling run_heading_fix.py ...")
+        try:
+            _heading_runner = str(Path(__file__).parent / "run_heading_fix.py")
+            _heading_proc = _subp.run(
+                [_sys.executable, _heading_runner, str(remediated_path)],
+                capture_output=True, text=True, timeout=60
+            )
+            _dlog(f"[PIPELINE]   run_heading_fix returncode={_heading_proc.returncode}")
+            _dlog(f"[PIPELINE]   run_heading_fix stdout={_heading_proc.stdout.strip()!r}")
+            if _heading_proc.stderr.strip():
+                _dlog(f"[PIPELINE]   run_heading_fix stderr={_heading_proc.stderr.strip()!r}")
+        except Exception as he:
+            import traceback
+            _dlog(f"[PIPELINE]   run_heading_fix ERROR: {he}")
+            _dlog(traceback.format_exc())
+
         final_size = _os.path.getsize(str(remediated_path)) if _os.path.exists(str(remediated_path)) else "MISSING"
         _dlog(f"[PIPELINE]   final file size={final_size}")
 

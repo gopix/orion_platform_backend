@@ -58,6 +58,18 @@ class RemediatorService:
             "src.modules.accessibility_plus.engines.remediator.tree_structure_remediator_agent",
             "TreeStructureRemediatorAgent",
         ),
+        (
+            "src.modules.accessibility_plus.engines.remediator.link_remediator_agent",
+            "LinkRemediatorAgent",
+        ),
+        (
+            "src.modules.accessibility_plus.engines.remediator.artifact_remediator_agent",
+            "ArtifactRemediatorAgent",
+        ),
+        (
+            "src.modules.accessibility_plus.engines.remediator.heading_remediator_agent",
+            "HeadingRemediatorAgent",
+        ),
     ]
 
     def __init__(self) -> None:

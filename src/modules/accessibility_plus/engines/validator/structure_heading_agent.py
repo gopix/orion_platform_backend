@@ -158,6 +158,7 @@ class StructureHeadingAgent(BaseAccessibilityValidatorAgent):
                     else "Add at least one H1 heading at the document start"
                 ),
                 status=ValidationStatus.PASS if has_h1 else ValidationStatus.FAIL,
+                auto_fixable=not has_h1,
             )
         except Exception as exc:
             return StructureHeadingAgent._issue(

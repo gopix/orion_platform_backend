@@ -34,6 +34,8 @@ class AccessibilityEnginePipeline:
         "READING_ORDER_AGENT",
         "VISUAL_ACCESSIBILITY_AGENT",
         "TREE_STRUCTURE_AGENT",
+        "LINK_ACCESSIBILITY_AGENT",
+        "ARTIFACT_ACCESSIBILITY_AGENT",
     ]
 
     PLACEHOLDER_AGENT_SEQUENCE: list[str] = []
@@ -80,6 +82,14 @@ class AccessibilityEnginePipeline:
         "TREE_STRUCTURE_AGENT": (
             "src.modules.accessibility_plus.engines.validator.tree_structure_agent",
             "TreeStructureAgent",
+        ),
+        "LINK_ACCESSIBILITY_AGENT": (
+            "src.modules.accessibility_plus.engines.validator.link_accessibility_agent",
+            "LinkAccessibilityAgent",
+        ),
+        "ARTIFACT_ACCESSIBILITY_AGENT": (
+            "src.modules.accessibility_plus.engines.validator.artifact_accessibility_agent",
+            "ArtifactAccessibilityAgent",
         ),
     }
 
