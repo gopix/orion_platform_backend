@@ -126,6 +126,38 @@ class AccessibilityRemediationPipeline:
 
         _dlog(f"[PIPELINE] final counts: fixed={issues_fixed} failed={issues_failed}")
 
+        # ── Update pdf_doc_path so pdfplumber-based validators (heading, link)
+        # read from the REMEDIATED file during revalidation, not the original upload.
+        # This ensures post-processing fixes (heading tags, link annotations) are
+        # visible in the revalidation results.
+        if remediated_pdf_path and _os.path.exists(remediated_pdf_path):
+            context["pdf_doc_path"] = remediated_pdf_path
+            _dlog(f"[PIPELINE] revalidation path updated -> {remediated_pdf_path}")
+            # Reopen PDFix doc from the remediated file so in-memory validators
+            # (heading structure, link annotations) see post-processed changes.
+            try:
+                from pdfixsdk.Pdfix import GetPdfix  # type: ignore[import]
+                _pdfix_inst = GetPdfix()
+                if _pdfix_inst is not None:
+                    _old_doc = context.get("pdf_doc")
+                    _new_doc = _pdfix_inst.OpenDoc(remediated_pdf_path, "")
+                    if _new_doc is not None:
+                        context["pdf_doc"] = _new_doc
+                        if hasattr(_new_doc, "GetNumPages"):
+                            context["total_pages"] = _new_doc.GetNumPages()
+                        _dlog("[PIPELINE] PDFix doc reopened from remediated file for revalidation")
+                        if _old_doc is not None:
+                            try:
+                                _old_doc.Close()
+                            except Exception:
+                                pass
+                    else:
+                        _dlog("[PIPELINE] WARNING: OpenDoc returned None — keeping original doc")
+            except ImportError:
+                _dlog("[PIPELINE] WARNING: pdfixsdk not available — keeping original doc")
+            except Exception as _reopen_exc:
+                _dlog(f"[PIPELINE] WARNING: could not reopen PDFix doc: {_reopen_exc}")
+
         context["_cache"] = {}
         _dlog("[PIPELINE] re-validating ...")
 
@@ -267,6 +299,18 @@ def _save_remediated_pdf(context):
         _dlog("[PIPELINE]   calling _set_display_doc_title ...")
         _set_display_doc_title(str(remediated_path))
         _dlog("[PIPELINE]   _set_display_doc_title done")
+
+        # Confirm DOC_PDFUA_DECLARATION outcome: _set_display_doc_title already
+        # injected pdfuaid:part=1 into the XMP — verify it landed in the file.
+        if context.get("_pdfua_fix_scheduled"):
+            try:
+                _pdf_bytes_check = Path(str(remediated_path)).read_bytes()
+                _pdfua_ok = b"pdfuaid:part" in _pdf_bytes_check
+                scheduled_outcomes["DOC_PDFUA_DECLARATION"] = _pdfua_ok
+                _dlog(f"[PIPELINE]   DOC_PDFUA_DECLARATION XMP verify -> {_pdfua_ok}")
+            except Exception as _pdfua_exc:
+                scheduled_outcomes["DOC_PDFUA_DECLARATION"] = False
+                _dlog(f"[PIPELINE]   DOC_PDFUA_DECLARATION XMP verify FAILED: {_pdfua_exc}")
 
         # Step 2 — embed font programs (pikepdf+fonttools, tag-safe)
         _dlog("[PIPELINE]   calling embed_standard_fonts ...")

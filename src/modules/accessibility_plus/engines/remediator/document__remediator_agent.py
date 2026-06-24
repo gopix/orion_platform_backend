@@ -28,6 +28,9 @@ from src.core.logger import get_logger
 
 from .base_remediator_agent import BaseRemediatorAgent, RemediationResult
 
+_MODULE_VERSION = "document_remediator_agent v2-schedule-pdfua"
+print(f"[DEBUG] {_MODULE_VERSION} loaded", flush=True) 
+
 logger = get_logger(__name__)
 
 # PDF/UA part number — PDF/UA-1 is part 1, PDF/UA-2 is part 2.
@@ -231,51 +234,26 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
     # ------------------------------------------------------------------
 
     def _fix_pdfua(self, rule_id: str, context: dict[str, Any]) -> RemediationResult:
-        """Enable the PDF/UA compliance flag via PDFix SDK.
+        """Schedule PDF/UA-1 XMP marker injection as a post-processing step.
 
-        SetPdfStandard requires two positional arguments:
-            _standard  – bitmask of PDF standard flags (OR-ed with kPdfStandardPdfUA)
-            _part      – PDF/UA part number (1 for PDF/UA-1, 2 for PDF/UA-2)
-
-        The XMP-level PDF/UA marker (pdfuaid:part) is additionally injected
-        by _set_display_doc_title in the post-processing step, so even if the
-        PDFix SDK call fails, the XMP declaration will still be present.
+        Why scheduling instead of in-memory PDFix SDK calls?
+            - SetPdfStandard(flags, part) fails: PDFix SWIG expects a C enum for 'part'
+            - SetMetadata(data) also fails: PDFix 9.x SWIG expects (data, length) signature
+            The pipeline's _set_display_doc_title step already injects pdfuaid:part=1
+            into the SAVED file's XMP stream via pypdf (no SWIG calls required).
+            We mark this as a scheduled fix so the pipeline correctly reconciles it
+            after post-processing runs.
         """
-        pdf_doc = context.get("pdf_doc")
-        if pdf_doc is None:
-            return self._result(rule_id, False, "fix_pdfua", error="pdf_doc not in context")
-
-        try:
-            from pdfixsdk.Pdfix import kPdfStandardPdfUA  # type: ignore[import]
-
-            current_standard = pdf_doc.GetPdfStandard()
-            if current_standard & kPdfStandardPdfUA:
-                return self._result(
-                    rule_id, True, "fix_pdfua",
-                    changes_made=["PDF/UA flag already set – no change needed"],
-                )
-
-            # FIX: SetPdfStandard requires two arguments: (standard_flags, part_number).
-            # Previously only one argument was passed, causing:
-            #   TypeError: PdfDoc.SetPdfStandard() missing 1 required positional argument: '_part'
-            pdf_doc.SetPdfStandard(current_standard | kPdfStandardPdfUA, _PDFUA_PART)
-            return self._result(
-                rule_id, True, "fix_pdfua",
-                changes_made=[
-                    f"Enabled PDF/UA-{_PDFUA_PART} compliance flag via SetPdfStandard(); "
-                    "XMP pdfuaid:part marker will be injected in post-processing."
-                ],
-            )
-
-        except ImportError:
-            return self._result(
-                rule_id, False, "fix_pdfua",
-                error="pdfixsdk not installed – cannot set PDF/UA flag via SDK; "
-                      "XMP marker will still be injected in post-processing.",
-            )
-        except Exception as exc:
-            logger.exception("DOC_PDFUA_DECLARATION remediation failed")
-            return self._result(rule_id, False, "fix_pdfua", error=str(exc))
+        print("[DEBUG v2] _fix_pdfua called — NEW scheduling code active", flush=True)
+        context["_pdfua_fix_scheduled"] = True
+        return self._result(
+            rule_id, True, "schedule_pdfua_fix",
+            changes_made=[
+                "Scheduled PDF/UA-1 XMP marker injection (pdfuaid:part=1) "
+                "as a post-processing step. The _set_display_doc_title step "
+                "injects this into the saved file's XMP stream via pypdf."
+            ],
+        )
 
 
 # ---------------------------------------------------------------------------

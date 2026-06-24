@@ -263,13 +263,39 @@ class DocumentAccessibilityAgent(BaseAccessibilityValidatorAgent):
 
     @staticmethod
     def _check_pdfua_flag(pdf_doc, check_code: str) -> ValidationIssue:
-        """Check if document is marked as PDF/UA compliant."""
+        """Check if document is marked as PDF/UA compliant.
+
+        Checks both the internal PDFix standard flag AND the XMP pdfuaid:part
+        marker. The XMP marker is the authoritative source per PDF/UA-1 spec
+        and is what PAC 2026, Acrobat, and VeraPDF actually verify.
+        """
         try:
-            # Import PDFix constants
+            import re as _re
             from pdfixsdk.Pdfix import kPdfStandardPdfUA
 
-            pdf_standard = pdf_doc.GetPdfStandard()
-            is_pdfua = bool(pdf_standard & kPdfStandardPdfUA)
+            is_pdfua = False
+
+            # Method 1: internal PDFix standard flag (fast path)
+            try:
+                pdf_standard = pdf_doc.GetPdfStandard()
+                is_pdfua = bool(pdf_standard & kPdfStandardPdfUA)
+            except Exception:
+                pass
+
+            # Method 2: XMP pdfuaid:part (authoritative — PAC 2026 / VeraPDF check)
+            if not is_pdfua and hasattr(pdf_doc, "GetMetadata"):
+                try:
+                    raw = pdf_doc.GetMetadata()
+                    if raw:
+                        xmp_text = (
+                            raw.decode("utf-8", errors="replace")
+                            if isinstance(raw, (bytes, bytearray))
+                            else str(raw)
+                        )
+                        if _re.search(r"<pdfuaid:part>\s*1\s*</pdfuaid:part>", xmp_text):
+                            is_pdfua = True
+                except Exception:
+                    pass
 
             return DocumentAccessibilityAgent._issue(
                 rule_id=check_code,
