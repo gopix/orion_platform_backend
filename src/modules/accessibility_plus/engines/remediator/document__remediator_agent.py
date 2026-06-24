@@ -30,6 +30,10 @@ from .base_remediator_agent import BaseRemediatorAgent, RemediationResult
 
 logger = get_logger(__name__)
 
+# PDF/UA part number — PDF/UA-1 is part 1, PDF/UA-2 is part 2.
+# We target PDF/UA-1 which is the widely adopted standard.
+_PDFUA_PART = 1
+
 
 class DocumentRemediatorAgent(BaseRemediatorAgent):
     """Remediates document-level accessibility issues using PDFix SDK."""
@@ -37,14 +41,13 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
     agent_name = "Document Remediator Agent"
 
     supported_rules: set[str] = {
-        "DOC_HAS_TITLE",          # ← added: was missing auto_fixable=True in validator
+        "DOC_HAS_TITLE",
         "DOC_HAS_LANGUAGE",
         "DOC_HAS_METADATA",
         "DOC_IS_TAGGED",
         "DOC_PDFUA_DECLARATION",
     }
 
-    # Default language applied when the document has none set.
     DEFAULT_LANGUAGE = "en-US"
 
     # ------------------------------------------------------------------
@@ -58,7 +61,7 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
     ) -> RemediationResult:
         rule_id = issue.get("rule_id", "")
         handlers = {
-            "DOC_HAS_TITLE": self._fix_title,          # ← added
+            "DOC_HAS_TITLE": self._fix_title,
             "DOC_HAS_LANGUAGE": self._fix_language,
             "DOC_HAS_METADATA": self._fix_metadata,
             "DOC_IS_TAGGED": self._fix_tagging,
@@ -77,22 +80,6 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
     # ------------------------------------------------------------------
 
     def _fix_title(self, rule_id: str, context: dict[str, Any]) -> RemediationResult:
-        """
-        Set the document title in both the Info dictionary and the XMP stream.
-
-        Why both?
-            Adobe Acrobat's Accessibility Checker "Title" test reads from the
-            XMP metadata stream (``dc:title``).  PDFix ``SetInfo("Title", v)``
-            updates the Info dictionary (/Title key in the trailer dict), which
-            may not automatically synchronise with the XMP stream depending on
-            SDK version.  We therefore:
-              1. Call ``SetInfo("Title", title)`` – Info dictionary.
-              2. Call ``SetMetadata(xmp_bytes)`` – patch ``dc:title`` in the
-                 raw XMP XML so Acrobat's checker definitely sees the value.
-
-            If XMP patching fails we still return success (Info dict was set)
-            but include a warning so the caller knows Acrobat may still flag it.
-        """
         pdf_doc = context.get("pdf_doc")
         if pdf_doc is None:
             return self._result(rule_id, False, "fix_title", error="pdf_doc not in context")
@@ -105,8 +92,6 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
                     changes_made=[f"Title already set to '{current_title}' – no change needed"],
                 )
 
-            # Choose title: prefer document_name from context (the uploaded filename
-            # without extension is a reasonable default), fall back to generic.
             raw_name = context.get("document_name") or ""
             title = (
                 raw_name.rsplit(".", 1)[0].replace("_", " ").replace("-", " ").strip()
@@ -114,12 +99,9 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
             )
 
             changes: list[str] = []
-
-            # ── 1. Info dictionary ────────────────────────────────────
             pdf_doc.SetInfo("Title", title)
             changes.append(f"Set Info /Title → '{title}'")
 
-            # ── 2. XMP metadata stream ────────────────────────────────
             xmp_warning = _patch_xmp_title(pdf_doc, title)
             if xmp_warning:
                 changes.append(f"XMP dc:title warning: {xmp_warning}")
@@ -137,7 +119,6 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
     # ------------------------------------------------------------------
 
     def _fix_language(self, rule_id: str, context: dict[str, Any]) -> RemediationResult:
-        """Set document language to the default locale when none is present."""
         pdf_doc = context.get("pdf_doc")
         if pdf_doc is None:
             return self._result(rule_id, False, "fix_language", error="pdf_doc not in context")
@@ -164,14 +145,12 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
     # ------------------------------------------------------------------
 
     def _fix_metadata(self, rule_id: str, context: dict[str, Any]) -> RemediationResult:
-        """Fill any missing standard document info fields (Title, Author, Subject)."""
         pdf_doc = context.get("pdf_doc")
         if pdf_doc is None:
             return self._result(rule_id, False, "fix_metadata", error="pdf_doc not in context")
 
         changes: list[str] = []
         try:
-            # Title → prefer document_name from context, fall back to generic value
             if not (pdf_doc.GetInfo("Title") or "").strip():
                 title = context.get("document_name") or "Untitled Document"
                 pdf_doc.SetInfo("Title", title)
@@ -201,13 +180,11 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
     # ------------------------------------------------------------------
 
     def _fix_tagging(self, rule_id: str, context: dict[str, Any]) -> RemediationResult:
-        """Auto-tag the document using PDFix ``AddTags`` when no structure tree exists."""
         pdf_doc = context.get("pdf_doc")
         if pdf_doc is None:
             return self._result(rule_id, False, "fix_tagging", error="pdf_doc not in context")
 
         try:
-            # Guard: skip if already tagged
             struct_tree = pdf_doc.GetStructTree()
             if struct_tree:
                 return self._result(
@@ -226,7 +203,6 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
                     error="PDFix AddTags() returned False – document may be encrypted or corrupt",
                 )
 
-            # Invalidate all structure-based caches so re-validation re-traverses
             self._invalidate_cache(
                 context,
                 "headings_by_pdf",
@@ -255,7 +231,16 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
     # ------------------------------------------------------------------
 
     def _fix_pdfua(self, rule_id: str, context: dict[str, Any]) -> RemediationResult:
-        """Enable the PDF/UA compliance flag in the document standard field."""
+        """Enable the PDF/UA compliance flag via PDFix SDK.
+
+        SetPdfStandard requires two positional arguments:
+            _standard  – bitmask of PDF standard flags (OR-ed with kPdfStandardPdfUA)
+            _part      – PDF/UA part number (1 for PDF/UA-1, 2 for PDF/UA-2)
+
+        The XMP-level PDF/UA marker (pdfuaid:part) is additionally injected
+        by _set_display_doc_title in the post-processing step, so even if the
+        PDFix SDK call fails, the XMP declaration will still be present.
+        """
         pdf_doc = context.get("pdf_doc")
         if pdf_doc is None:
             return self._result(rule_id, False, "fix_pdfua", error="pdf_doc not in context")
@@ -270,16 +255,23 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
                     changes_made=["PDF/UA flag already set – no change needed"],
                 )
 
-            pdf_doc.SetPdfStandard(current_standard | kPdfStandardPdfUA)
+            # FIX: SetPdfStandard requires two arguments: (standard_flags, part_number).
+            # Previously only one argument was passed, causing:
+            #   TypeError: PdfDoc.SetPdfStandard() missing 1 required positional argument: '_part'
+            pdf_doc.SetPdfStandard(current_standard | kPdfStandardPdfUA, _PDFUA_PART)
             return self._result(
                 rule_id, True, "fix_pdfua",
-                changes_made=["Enabled PDF/UA compliance flag (XMP metadata + PDF standard field)"],
+                changes_made=[
+                    f"Enabled PDF/UA-{_PDFUA_PART} compliance flag via SetPdfStandard(); "
+                    "XMP pdfuaid:part marker will be injected in post-processing."
+                ],
             )
 
         except ImportError:
             return self._result(
                 rule_id, False, "fix_pdfua",
-                error="pdfixsdk not installed – cannot set PDF/UA flag",
+                error="pdfixsdk not installed – cannot set PDF/UA flag via SDK; "
+                      "XMP marker will still be injected in post-processing.",
             )
         except Exception as exc:
             logger.exception("DOC_PDFUA_DECLARATION remediation failed")
@@ -291,28 +283,9 @@ class DocumentRemediatorAgent(BaseRemediatorAgent):
 # ---------------------------------------------------------------------------
 
 def _patch_xmp_title(pdf_doc: Any, title: str) -> str | None:
-    """
-    Inject or replace ``dc:title`` in the document's XMP metadata stream.
-
-    Adobe Acrobat reads the title from XMP (``dc:title`` / ``rdf:Alt`` /
-    ``rdf:li`` structure), not from the Info dictionary, for its accessibility
-    "Title" check.
-
-    Strategy:
-        1. Read existing XMP via ``pdf_doc.GetMetadata()``.
-        2. If the stream already contains ``<dc:title>``, replace its inner
-           ``rdf:li`` text; otherwise insert a minimal ``<dc:title>`` block
-           immediately before the closing ``</rdf:Description>`` tag.
-        3. Write back via ``pdf_doc.SetMetadata(new_xmp_bytes)``.
-
-    Returns:
-        None on success, or a short warning string if XMP could not be patched
-        (the Info dictionary fix already applied, so this is non-fatal).
-    """
     import re as _re
 
     try:
-        # Read existing XMP bytes
         xmp_bytes: bytes | None = None
         if hasattr(pdf_doc, "GetMetadata"):
             raw = pdf_doc.GetMetadata()
@@ -322,7 +295,6 @@ def _patch_xmp_title(pdf_doc: Any, title: str) -> str | None:
                 xmp_bytes = raw.encode("utf-8")
 
         if not xmp_bytes:
-            # No existing XMP – build a minimal packet from scratch
             xmp_bytes = _minimal_xmp_packet(title)
             if hasattr(pdf_doc, "SetMetadata"):
                 pdf_doc.SetMetadata(xmp_bytes)
@@ -344,7 +316,6 @@ def _patch_xmp_title(pdf_doc: Any, title: str) -> str | None:
         )
 
         if "<dc:title>" in xmp_str:
-            # Replace existing dc:title block (handles both inline and multiline)
             xmp_str = _re.sub(
                 r"<dc:title>.*?</dc:title>",
                 dc_title_block,
@@ -352,7 +323,6 @@ def _patch_xmp_title(pdf_doc: Any, title: str) -> str | None:
                 flags=_re.DOTALL,
             )
         else:
-            # Insert before closing </rdf:Description>
             xmp_str = xmp_str.replace(
                 "</rdf:Description>",
                 f"  {dc_title_block}\n</rdf:Description>",
@@ -371,7 +341,6 @@ def _patch_xmp_title(pdf_doc: Any, title: str) -> str | None:
 
 
 def _minimal_xmp_packet(title: str) -> bytes:
-    """Return a bare-minimum XMP packet containing dc:title."""
     escaped = (
         title
         .replace("&", "&amp;")

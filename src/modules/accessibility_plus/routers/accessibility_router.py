@@ -49,6 +49,81 @@ from src.modules.accessibility_plus.models.master_accessibility_model import (
     MasterAccessibilityModel,
 )
 
+
+# ---------------------------------------------------------------------------
+# Issues node builder
+# ---------------------------------------------------------------------------
+
+def _build_issues_node(
+    initial: dict,
+    revalidation: dict,
+    remediation_results: list,
+) -> dict:
+    """Build a structured 'issues' node for the API response.
+
+    Sections
+    --------
+    detected      – every FAIL found in the initial validation scan
+    fixed         – remediations that succeeded (success=True)
+    failed_to_fix – remediations that were attempted but failed (success=False)
+    remaining     – every FAIL still present after remediation (from revalidation)
+    """
+
+    # ── detected: initial FAILs ──────────────────────────────────────────
+    detected = [
+        {
+            "rule_id":       i.get("rule_id"),
+            "severity":      i.get("severity"),
+            "category":      i.get("category"),
+            "agent":         i.get("agent_name"),
+            "message":       i.get("message"),
+            "recommendation": i.get("recommendation"),
+            "auto_fixable":  i.get("auto_fixable", False),
+        }
+        for i in initial.get("issues", [])
+        if i.get("status") == "FAIL"
+    ]
+
+    # ── fixed / failed_to_fix: split remediation results ────────────────
+    fixed = []
+    failed_to_fix = []
+    for r in remediation_results:
+        if r.get("success"):
+            fixed.append({
+                "rule_id":      r.get("rule_id"),
+                "agent":        r.get("agent_name"),
+                "action":       r.get("action"),
+                "changes_made": r.get("changes_made", []),
+            })
+        else:
+            failed_to_fix.append({
+                "rule_id": r.get("rule_id"),
+                "agent":   r.get("agent_name"),
+                "action":  r.get("action"),
+                "error":   r.get("error"),
+            })
+
+    # ── remaining: revalidation FAILs ────────────────────────────────────
+    remaining = [
+        {
+            "rule_id":        i.get("rule_id"),
+            "severity":       i.get("severity"),
+            "category":       i.get("category"),
+            "agent":          i.get("agent_name"),
+            "message":        i.get("message"),
+            "recommendation": i.get("recommendation"),
+        }
+        for i in revalidation.get("issues", [])
+        if i.get("status") == "FAIL"
+    ]
+
+    return {
+        "detected":      detected,
+        "fixed":         fixed,
+        "failed_to_fix": failed_to_fix,
+        "remaining":     remaining,
+    }
+
 router = APIRouter()
 logger = get_logger(__name__)
 
@@ -674,13 +749,19 @@ async def orion_remediate_pdf(
             "created_at": datetime.utcnow().isoformat(),
         }
 
+        issues_node = _build_issues_node(
+            initial=initial,
+            revalidation=revalidation,
+            remediation_results=pipeline_result.get("remediation_results", []),
+        )
+
         response_data = {
             "job_id": job_id,
             "status": "completed",
-            "issues_detected": initial.get("total_issues", 0),
+            "issues_detected": summary.get("issues_detected", 0),
             "issues_fixed": summary.get("issues_fixed", 0),
-            "issues_remaining": revalidation.get("total_issues", 0),
-            "auto_fixable_count": initial.get("auto_fixable_count", 0),
+            "issues_remaining": summary.get("issues_remaining", 0),
+            "auto_fixable_count": summary.get("issues_attempted", 0),
             "save_success": summary.get("save_success", False),
             "download_url": (
                 f"/api/v1/accessibility/download-remediated-pdf/{job_id}"
@@ -689,13 +770,14 @@ async def orion_remediate_pdf(
             ),
             "report_url": f"/api/v1/accessibility/remediation-report/{job_id}",
             "summary": summary,
+            "issues": issues_node,
         }
 
         logger.info(
             "orion-remediate-pdf done | job=%s fixed=%s remaining=%s saved=%s",
             job_id,
             summary.get("issues_fixed", 0),
-            revalidation.get("total_issues", 0),
+            summary.get("issues_remaining", 0),
             summary.get("save_success", False),
         )
 

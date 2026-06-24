@@ -56,32 +56,75 @@ class AccessibilityRemediationPipeline:
         )
         _dlog(f"[PIPELINE] initial validation done | total_issues={validation_result.get('total_issues', 0)}")
 
+        # Only attempt issues that are auto-fixable AND actually failing
         auto_fixable_issues = [
             issue for issue in validation_result.get("issues", [])
-            if issue.get("auto_fixable") and issue.get("status") != "PASS"
+            if issue.get("auto_fixable") and issue.get("status") == "FAIL"
         ]
-        _dlog(f"[PIPELINE] auto_fixable_issues={len(auto_fixable_issues)}")
+        _dlog(f"[PIPELINE] auto_fixable_issues (FAIL only)={len(auto_fixable_issues)}")
+
+        # Count initial FAILs for accurate issues_detected reporting
+        initial_fail_count = sum(
+            1 for issue in validation_result.get("issues", [])
+            if issue.get("status") == "FAIL"
+        )
 
         remediation_results = []
         issues_fixed = 0
         issues_failed = 0
+
+        # Track which rules were "scheduled" (fix deferred to post-processing)
+        # These must be reconciled against actual subprocess outcomes later.
+        scheduled_rules: set[str] = set()
 
         for i, issue in enumerate(auto_fixable_issues):
             _dlog(f"[PIPELINE] remediating {i+1}/{len(auto_fixable_issues)}: {issue.get('rule_id')}")
             result = self._remediator_service.remediate(issue, context)
             remediation_results.append(asdict(result))
             if result.success:
-                issues_fixed += 1
-                _dlog(f"[PIPELINE]   -> FIXED")
+                # If the action is a "schedule_*" action, defer the success verdict
+                # until post-processing confirms the subprocess succeeded.
+                if result.action and result.action.startswith("schedule_"):
+                    scheduled_rules.add(result.rule_id)
+                    _dlog(f"[PIPELINE]   -> SCHEDULED (pending post-processing)")
+                else:
+                    issues_fixed += 1
+                    _dlog(f"[PIPELINE]   -> FIXED")
             else:
                 issues_failed += 1
                 _dlog(f"[PIPELINE]   -> FAILED: {result.error}")
 
-        _dlog(f"[PIPELINE] remediation done: fixed={issues_fixed} failed={issues_failed}")
+        _dlog(f"[PIPELINE] pre-save counts: fixed={issues_fixed} scheduled={len(scheduled_rules)} failed={issues_failed}")
         _dlog("[PIPELINE] calling _save_remediated_pdf ...")
 
-        remediated_pdf_path, save_success, font_stats = _save_remediated_pdf(context)
-        _dlog(f"[PIPELINE] _save_remediated_pdf -> path={remediated_pdf_path} success={save_success} font_stats={font_stats}")
+        # _save_remediated_pdf now returns a 4-tuple; the last element is a dict
+        # mapping rule_id → bool for each scheduled fix that ran as a subprocess.
+        remediated_pdf_path, save_success, font_stats, scheduled_outcomes = _save_remediated_pdf(context)
+        _dlog(f"[PIPELINE] _save_remediated_pdf -> path={remediated_pdf_path} success={save_success} "
+              f"font_stats={font_stats} scheduled_outcomes={scheduled_outcomes}")
+
+        # Reconcile scheduled fixes against actual subprocess outcomes
+        for rem_result in remediation_results:
+            rule_id = rem_result.get("rule_id", "")
+            if rule_id not in scheduled_rules:
+                continue
+            actual_success = scheduled_outcomes.get(rule_id, False)
+            if actual_success:
+                issues_fixed += 1
+                rem_result["changes_made"] = rem_result.get("changes_made", []) + [
+                    "Post-processing step completed successfully."
+                ]
+                _dlog(f"[PIPELINE]   scheduled fix {rule_id} -> confirmed FIXED")
+            else:
+                issues_failed += 1
+                rem_result["success"] = False
+                rem_result["error"] = (
+                    rem_result.get("error")
+                    or "Post-processing subprocess did not complete successfully."
+                )
+                _dlog(f"[PIPELINE]   scheduled fix {rule_id} -> confirmed FAILED")
+
+        _dlog(f"[PIPELINE] final counts: fixed={issues_fixed} failed={issues_failed}")
 
         context["_cache"] = {}
         _dlog("[PIPELINE] re-validating ...")
@@ -93,6 +136,12 @@ class AccessibilityRemediationPipeline:
         )
         _dlog(f"[PIPELINE] revalidation done | total_issues={revalidation_result.get('total_issues', 0)}")
 
+        # Compute accurate remaining-failures count from revalidation
+        revalidation_fail_count = sum(
+            1 for issue in revalidation_result.get("issues", [])
+            if issue.get("status") == "FAIL"
+        )
+
         elapsed_ms = int((perf_counter() - start) * 1000)
         _dlog(f"[PIPELINE] COMPLETE in {elapsed_ms}ms")
 
@@ -102,9 +151,16 @@ class AccessibilityRemediationPipeline:
             "revalidation_result": revalidation_result,
             "remediated_pdf_path": remediated_pdf_path,
             "summary": {
+                # ── Attempt-level stats (covers only auto-fixable FAILs attempted) ──
                 "issues_attempted": len(auto_fixable_issues),
                 "issues_fixed": issues_fixed,
                 "issues_failed": issues_failed,
+                # ── Document-level stats (comparable between pre and post) ──
+                # issues_detected  = number of FAIL rules before remediation
+                # issues_remaining = number of FAIL rules after remediation
+                "issues_detected": initial_fail_count,
+                "issues_remaining": revalidation_fail_count,
+                # ── Infrastructure ──
                 "save_success": save_success,
                 "total_duration_ms": elapsed_ms,
                 "font_encoding": font_stats,
@@ -116,19 +172,29 @@ class AccessibilityRemediationPipeline:
 
 
 def _save_remediated_pdf(context):
+    """Save remediated PDF and run all post-processing fixers.
+
+    Returns:
+        (remediated_path | None, save_success, font_stats, scheduled_outcomes)
+
+        scheduled_outcomes maps rule_id → bool for each fix that ran
+        as a subprocess (HDR-001 for heading fix, LINK-001 for link fix).
+    """
     _dlog("[PIPELINE] _save_remediated_pdf() ENTERED")
 
     pdf_doc = context.get("pdf_doc")
     _dlog(f"[PIPELINE]   pdf_doc={pdf_doc}")
     if pdf_doc is None:
         _dlog("[PIPELINE]   ERROR: pdf_doc is None")
-        return None, False, {}
+        return None, False, {}, {}
 
     original_path = context.get("pdf_doc_path") or ""
     _dlog(f"[PIPELINE]   original_path={original_path}")
     if not original_path:
         _dlog("[PIPELINE]   ERROR: original_path empty")
-        return None, False, {}
+        return None, False, {}, {}
+
+    scheduled_outcomes: dict[str, bool] = {}
 
     try:
         _dlog("[PIPELINE]   importing kSaveFull ...")
@@ -149,7 +215,7 @@ def _save_remediated_pdf(context):
             _dlog(f"[PIPELINE]   pdf_doc.Save() returned {ok}")
             if not ok:
                 _dlog("[PIPELINE]   ERROR: Save returned False")
-                return None, False, {}
+                return None, False, {}, {}
 
             tmp_size = _os.path.getsize(tmp_path)
             _dlog(f"[PIPELINE]   tmp file size={tmp_size} bytes")
@@ -172,8 +238,18 @@ def _save_remediated_pdf(context):
                 _os.unlink(_copy_path)
             except Exception:
                 pass
+
+            # ── Parse actual fonts_patched count from subprocess stdout ──────
+            fonts_patched_count = 0
             if _proc.returncode == 0 and _os.path.exists(str(remediated_path)):
-                tu = {"fonts_patched": "see stdout", "save_success": True}
+                for line in _proc.stdout.splitlines():
+                    # The fixer prints lines like "Patched N fonts" or "fonts_patched=N"
+                    import re as _re
+                    m = _re.search(r"(?:patched|fonts_patched)[=:\s]+(\d+)", line, _re.IGNORECASE)
+                    if m:
+                        fonts_patched_count = int(m.group(1))
+                        break
+                tu = {"fonts_patched": fonts_patched_count, "save_success": True}
                 _dlog("[PIPELINE]   encoding fix applied successfully")
             else:
                 _dlog("[PIPELINE]   fixer failed — copying original")
@@ -213,7 +289,6 @@ def _save_remediated_pdf(context):
             _dlog(traceback.format_exc())
 
         # Step 4 — fix missing Link annotations + <Link> structure elements (PDF/UA)
-        # Runs as subprocess (same pattern as font_encoding_fixer) for isolation.
         _dlog("[PIPELINE]   calling run_link_fix.py ...")
         try:
             _link_runner = str(Path(__file__).parent / "run_link_fix.py")
@@ -225,10 +300,14 @@ def _save_remediated_pdf(context):
             _dlog(f"[PIPELINE]   run_link_fix stdout={_link_proc.stdout.strip()!r}")
             if _link_proc.stderr.strip():
                 _dlog(f"[PIPELINE]   run_link_fix stderr={_link_proc.stderr.strip()!r}")
+            # Record actual outcome for LINK-001 scheduled fix
+            scheduled_outcomes["LINK-001"] = (_link_proc.returncode == 0)
         except Exception as le:
             import traceback
             _dlog(f"[PIPELINE]   run_link_fix ERROR: {le}")
             _dlog(traceback.format_exc())
+            scheduled_outcomes["LINK-001"] = False
+
         # Step 5 — fix wrongly-artifacted content (PDF/UA)
         _dlog("[PIPELINE]   calling run_artifact_fix.py ...")
         try:
@@ -258,26 +337,29 @@ def _save_remediated_pdf(context):
             _dlog(f"[PIPELINE]   run_heading_fix stdout={_heading_proc.stdout.strip()!r}")
             if _heading_proc.stderr.strip():
                 _dlog(f"[PIPELINE]   run_heading_fix stderr={_heading_proc.stderr.strip()!r}")
+            # Record actual outcome for HDR-001 scheduled fix
+            scheduled_outcomes["HDR-001"] = (_heading_proc.returncode == 0)
         except Exception as he:
             import traceback
             _dlog(f"[PIPELINE]   run_heading_fix ERROR: {he}")
             _dlog(traceback.format_exc())
+            scheduled_outcomes["HDR-001"] = False
 
         final_size = _os.path.getsize(str(remediated_path)) if _os.path.exists(str(remediated_path)) else "MISSING"
         _dlog(f"[PIPELINE]   final file size={final_size}")
 
         context["_remediated_pdf_path"] = str(remediated_path)
         _dlog(f"[PIPELINE] SUCCESS -> {remediated_path}")
-        return str(remediated_path), True, tu
+        return str(remediated_path), True, tu, scheduled_outcomes
 
     except ImportError as e:
         _dlog(f"[PIPELINE]   ImportError: {e}")
-        return None, False, {}
+        return None, False, {}, {}
     except Exception as e:
         import traceback
         _dlog(f"[PIPELINE]   EXCEPTION {type(e).__name__}: {e}")
         _dlog(traceback.format_exc())
-        return None, False, {}
+        return None, False, {}, {}
 
 
 def _set_display_doc_title(pdf_path: str) -> None:
