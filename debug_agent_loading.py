@@ -11,7 +11,7 @@ for module_name in list(sys.modules.keys()):
 
 print("Attempting fresh import...")
 try:
-    from src.modules.accessibility_plus.engines.accesibility_engine_pipeline import AccessibilityEnginePipeline
+    from src.modules.accessibility_pdf.engines.accesibility_engine_pipeline import AccessibilityEnginePipeline
     
     pipeline = AccessibilityEnginePipeline()
     

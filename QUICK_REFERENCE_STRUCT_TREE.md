@@ -20,10 +20,10 @@ Everything you need to know at a glance.
 Three production-ready components:
 
 1. StructTreeExplorer (Core Library)
-   File: src/modules/accessibility_plus/engines/validator/structure_tree_explorer.py
+   File: src/modules/accessibility_pdf/engines/validator/structure_tree_explorer.py
    
 2. TreeStructureAgent (Pipeline Integration)
-   File: src/modules/accessibility_plus/engines/validator/tree_structure_agent.py
+   File: src/modules/accessibility_pdf/engines/validator/tree_structure_agent.py
    
 3. Complete Documentation + Examples
    Files: STRUCT_TREE_EXPLORER_*.md files
@@ -56,7 +56,7 @@ Perfect for UI tree visualization exactly as you sketched it!
 # ============================================================================
 
 """
-from src.modules.accessibility_plus.engines.validator.structure_tree_explorer import (
+from src.modules.accessibility_pdf.engines.validator.structure_tree_explorer import (
     StructTreeExplorer
 )
 
@@ -274,14 +274,14 @@ Document
 
 """
 Main Implementation:
-→ src/modules/accessibility_plus/engines/validator/structure_tree_explorer.py
+→ src/modules/accessibility_pdf/engines/validator/structure_tree_explorer.py
 
 Pipeline Integration:
-→ src/modules/accessibility_plus/engines/validator/tree_structure_agent.py
-→ src/modules/accessibility_plus/engines/accesibility_engine_pipeline.py (MODIFIED)
+→ src/modules/accessibility_pdf/engines/validator/tree_structure_agent.py
+→ src/modules/accessibility_pdf/engines/accesibility_engine_pipeline.py (MODIFIED)
 
 Documentation:
-→ src/modules/accessibility_plus/engines/validator/STRUCT_TREE_EXPLORER_EXAMPLES.md
+→ src/modules/accessibility_pdf/engines/validator/STRUCT_TREE_EXPLORER_EXAMPLES.md
 → STRUCT_TREE_EXPLORER_IMPLEMENTATION.md
 → STRUCT_TREE_EXPLORER_ARCHITECTURE.md
 → This file (QUICK_REFERENCE.md)

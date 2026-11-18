@@ -168,7 +168,7 @@ This is 100% feasible and now fully implemented!
 """
 To use it in your code:
 
-from src.modules.accessibility_plus.engines.validator.structure_tree_explorer import (
+from src.modules.accessibility_pdf.engines.validator.structure_tree_explorer import (
     StructTreeExplorer
 )
 
@@ -295,7 +295,7 @@ Each element can have:
 """
 The TreeStructureAgent is already registered in your pipeline:
 
-Location: src/modules/accessibility_plus/engines/accesibility_engine_pipeline.py
+Location: src/modules/accessibility_pdf/engines/accesibility_engine_pipeline.py
 
 When the pipeline runs, it will execute:
 
@@ -349,12 +349,12 @@ To integrate with your frontend:
 
 """
 New files:
-- src/modules/accessibility_plus/engines/validator/structure_tree_explorer.py
-- src/modules/accessibility_plus/engines/validator/tree_structure_agent.py
-- src/modules/accessibility_plus/engines/validator/STRUCT_TREE_EXPLORER_EXAMPLES.md
+- src/modules/accessibility_pdf/engines/validator/structure_tree_explorer.py
+- src/modules/accessibility_pdf/engines/validator/tree_structure_agent.py
+- src/modules/accessibility_pdf/engines/validator/STRUCT_TREE_EXPLORER_EXAMPLES.md
 
 Modified files:
-- src/modules/accessibility_plus/engines/accesibility_engine_pipeline.py
+- src/modules/accessibility_pdf/engines/accesibility_engine_pipeline.py
   (Added TREE_STRUCTURE_AGENT to IMPLEMENTED_AGENT_SEQUENCE and AGENT_CLASS_MAP)
 
 Memory updated:
@@ -370,7 +370,7 @@ Memory updated:
 """
 You can test it right now with your existing PDF:
 
-from src.modules.accessibility_plus.engines.validator.structure_tree_explorer import (
+from src.modules.accessibility_pdf.engines.validator.structure_tree_explorer import (
     StructTreeExplorer
 )
 from src.core.logger import get_logger

@@ -3,7 +3,7 @@
 import requests
 
 url = 'http://localhost:8000/api/v1/accessibility/orion-validate-pdf'
-pdf_path = r'src\modules\accessibility_plus\temp\remediated\aaa.pdf.pdf'
+pdf_path = r'src\modules\accessibility_pdf\temp\remediated\aaa.pdf.pdf'
 
 with open(pdf_path, 'rb') as f:
     files = {'file': ('test.pdf', f)}

@@ -4,11 +4,12 @@ FROM python:3.12-slim
 # Set working directory
 WORKDIR /app
 
-# Install Java (required for VeraPDF) and dependencies
+# Install Java (required for VeraPDF), Liberation fonts (for font embedding), and utilities
 RUN apt-get update && apt-get install -y \
     openjdk-21-jre-headless \
     unzip \
     ca-certificates \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Install VeraPDF binary in image from local bundled ZIP (offline build)
@@ -29,7 +30,24 @@ RUN mkdir -p /tmp/verapdf-installer-src /opt/verapdf && \
 COPY requirements.txt .
 
 # Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+#RUN pip install --no-cache-dir -r requirements.txt
+
+
+# Install dependencies with increased timeout and retries
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
+    --timeout=600 \
+    --retries=20 \
+    -r requirements.txt
+
+
+# Pre-warm the tiktoken BPE cache at build time. tiktoken downloads its encoding
+# files on first use; in a running container that call is often blocked or the
+# temp cache is cold, and token_counter.py then silently degrades to a chars/4
+# heuristic. Baking the cache in makes token counting work with no runtime egress.
+ENV TIKTOKEN_CACHE_DIR=/opt/tiktoken_cache
+RUN mkdir -p "$TIKTOKEN_CACHE_DIR" && \
+    python -c "import tiktoken; [tiktoken.get_encoding(e) for e in ('cl100k_base', 'o200k_base')]"
 
 # Copy PDFix SDK
 COPY pdfix_sdk-9.0.0/ /opt/pdfix_sdk/
@@ -45,5 +63,5 @@ ENV PDFIX_SDK_PATH=/opt/pdfix_sdk
 # Expose port
 EXPOSE 8000
 
-# Run FastAPI app
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run FastAPI app with extended keep-alive timeout for long-running PDF remediation
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--timeout-keep-alive", "600"]

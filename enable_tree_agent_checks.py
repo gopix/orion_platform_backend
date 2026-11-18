@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 """Insert TREE_STRUCTURE_AGENT checks into database"""
-from src.modules.accessibility_plus.engines.validator.tree_structure_agent import TreeStructureAgent
+from src.modules.accessibility_pdf.engines.validator.tree_structure_agent import TreeStructureAgent
 from src.core.database import SessionLocal
-from src.modules.accessibility_plus.models.master_accessibility_model import MasterAccessibilityModel
-from src.modules.accessibility_plus.models.org_project_accessibility_model import OrgProjectAccessibilityCheckModel
+from src.modules.accessibility_pdf.models.master_accessibility_model import MasterAccessibilityModel
+from src.modules.accessibility_pdf.models.org_project_accessibility_model import OrgProjectAccessibilityCheckModel
 from datetime import datetime
 
 agent = TreeStructureAgent()

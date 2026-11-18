@@ -7,7 +7,7 @@ url = 'http://localhost:8000/api/v1/accessibility/orion-validate-pdf'
 
 # Find an existing PDF
 import glob
-pdfs = glob.glob(r'src\modules\accessibility_plus\temp\remediat*')
+pdfs = glob.glob(r'src\modules\accessibility_pdf\temp\remediat*')
 
 if not pdfs:
     print("❌ No test PDF found")

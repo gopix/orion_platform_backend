@@ -23,6 +23,12 @@ services:
       LOG_LEVEL: INFO
       VERAPDF_COMMAND: /usr/local/bin/verapdf
       PDFIX_SDK_PATH: /opt/pdfix_sdk
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      BOOK_FORGE_STORAGE_ROOT: /app/book_forge
+    volumes:
+      - orion_book_forge_data:/app/book_forge
+      - orion_uploads_data:/app/uploads
+      - orion_logs_data:/app/logs
 
   db:
     build:
@@ -46,3 +52,6 @@ services:
 
 volumes:
   orion_db_data:
+  orion_book_forge_data:
+  orion_uploads_data:
+  orion_logs_data:

@@ -1,7 +1,7 @@
 """
 Test if TREE_STRUCTURE_AGENT executes in the full pipeline
 """
-from src.modules.accessibility_plus.engines.accesibility_engine_pipeline import AccessibilityEnginePipeline
+from src.modules.accessibility_pdf.engines.accesibility_engine_pipeline import AccessibilityEnginePipeline
 
 pipeline = AccessibilityEnginePipeline()
 

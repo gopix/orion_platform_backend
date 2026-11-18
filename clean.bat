@@ -10,5 +10,8 @@ for /d /r . %%d in (__pycache__) do (
     if exist "%%d" rd /s /q "%%d"
 )
 
-echo Done.
+:: Remove old debug log and create a fresh one
+type nul > pipeline_debug.log
+
+echo Project cleaned successfully.
 pause

@@ -1,3 +1,4 @@
 FROM mysql:8.0
 
-COPY src/sqls/orion_db.sql /docker-entrypoint-initdb.d/orion_db.sql
+# Initialize the database schema and seed data
+COPY src/sqls/orion_db.sql /docker-entrypoint-initdb.d/01_orion_db.sql

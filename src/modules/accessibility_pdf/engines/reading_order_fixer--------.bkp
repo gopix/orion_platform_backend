@@ -1,0 +1,389 @@
+#!/usr/bin/env python3
+"""
+reading_order_fixer.py
+======================
+Fixes logical reading order in the structure tree.
+
+The defect this solves
+----------------------
+PAC / veraPDF validate the *syntax* of the tag tree, never the *sequence*.  A
+file can be 100% PDF/UA-clean and still have a tag tree whose page sequence is
+
+    22, 11, 10, 8, 7, 3, 1, 2, 3, ... , 23, 2, 3, ... , 23
+
+which is what G6_CB_SCIENCE_Ch02 had.  A screen reader walks the tag tree in
+order, so it starts reading on page 22.  Every checker passes it.
+
+Two passes
+----------
+PASS 1  page-order (always on, zero risk)
+        Stable-sort the top-level block children of <Document>/<Sect> by the
+        page index of their first marked-content item.  Stable => relative
+        order inside a page is untouched.  This alone fixes the catastrophic
+        case and the "running header / folio / orphaned table row appended at
+        the end of the document" case.
+
+PASS 2  within-page order (--within-page, use with review)
+        Re-orders blocks inside each page with a column-aware XY-cut:
+          - find vertical gutters (x-ranges no block crosses) -> columns
+          - full-width blocks act as horizontal separators between row-groups
+          - inside a column: top-to-bottom; between columns: left-to-right
+        This is what moves a chapter title that was tagged LAST on page 1 back
+        to the top, without interleaving a two-column bullet list.
+
+Reordering a /K array does NOT touch the ParentTree (that maps MCID -> element
+object, not position), so StructParents stay valid and PAC stays green.
+
+Usage
+-----
+    python reading_order_fixer.py in.pdf out.pdf [--within-page] [--report]
+"""
+from __future__ import annotations
+
+import sys
+import collections
+
+import pikepdf
+from pikepdf import Dictionary, Name, Array
+
+try:
+    from .mcid_geometry import document_mcid_boxes
+    from .struct_utils import fix_struct_parents, rebuild_parent_tree
+except ImportError:
+    from mcid_geometry import document_mcid_boxes
+    from struct_utils import fix_struct_parents, rebuild_parent_tree
+
+CONTAINER_TAGS = {"/Document", "/Sect", "/Part", "/Art", "/Div", "/NonStruct"}
+
+
+# ---------------------------------------------------------------- tree helpers
+def _page_index_map(pdf):
+    return {p.obj.objgen: i for i, p in enumerate(pdf.pages)}
+
+
+def _leaves(node, pidx, cur, out):
+    """Collect (page_index, mcid) for every marked-content item under `node`."""
+    if isinstance(node, Array):
+        for k in node:
+            _leaves(k, pidx, cur, out)
+        return
+    if isinstance(node, int):
+        if cur is not None:
+            out.append((cur, int(node)))
+        return
+    if not isinstance(node, Dictionary):
+        return
+    t = node.get("/Type")
+    if t == Name("/MCR"):
+        pg = node.get("/Pg")
+        pi = pidx.get(pg.objgen) if pg is not None else cur
+        if pi is not None:
+            out.append((pi, int(node.get("/MCID"))))
+        return
+    if t == Name("/OBJR"):
+        return
+    pg = node.get("/Pg")
+    nxt = pidx.get(pg.objgen) if pg is not None else cur
+    _leaves(node.get("/K"), pidx, nxt, out)
+
+
+def _expand(kids, pidx, depth=0):
+    """
+    Flatten wrapper containers whose page range overlaps their siblings'.
+
+    G6_CB_SCIENCE had <Document> with 214 children, the first of which was a
+    single <Sect> holding 275 blocks spanning pages 1-23 while the remaining
+    213 siblings also spanned pages 2-23.  No sort of one level can interleave
+    those, so a bucket-Sect like this must be spliced into its parent first.
+    A Sect that owns a contiguous page range of its own is left intact.
+    """
+    if depth > 3:
+        return list(kids)
+    spans = []
+    for k in kids:
+        lv = []
+        _leaves(k, pidx, None, lv)
+        pgs = [p for p, _ in lv]
+        spans.append((min(pgs), max(pgs)) if pgs else None)
+
+    out = []
+    for k, sp in zip(kids, spans):
+        is_container = (isinstance(k, Dictionary)
+                        and str(k.get("/S")) in CONTAINER_TAGS
+                        and isinstance(k.get("/K"), Array))
+        overlaps = sp is not None and any(
+            o is not None and o is not sp and not (o[1] < sp[0] or o[0] > sp[1])
+            for o in spans)
+        if is_container and overlaps:
+            out.extend(_expand(list(k["/K"]), pidx, depth + 1))
+        else:
+            out.append(k)
+    return out
+
+
+def _find_block_parent(pdf):
+    """Descend Document/Sect/Part wrappers to the array of real content blocks."""
+    node = pdf.Root["/StructTreeRoot"].get("/K")
+    if isinstance(node, Array):
+        if len(node) != 1:
+            return pdf.Root["/StructTreeRoot"], "/K"
+        node = node[0]
+    parent = node
+    while True:
+        k = parent.get("/K")
+        if not isinstance(k, Array):
+            return parent, "/K"
+        real = [c for c in k if isinstance(c, Dictionary) and c.get("/S") is not None]
+        # keep descending only while there is exactly one container child
+        if len(k) == 1 and len(real) == 1 and str(real[0].get("/S")) in CONTAINER_TAGS:
+            parent = real[0]
+            continue
+        return parent, "/K"
+
+
+# ---------------------------------------------------------------- block model
+class Block:
+    __slots__ = ("obj", "page", "top", "bottom", "left", "right", "chars", "text", "idx")
+
+    def __init__(self, obj, idx, leaves, boxes):
+        self.obj, self.idx = obj, idx
+        self.page = min((p for p, _ in leaves), default=None)
+        pl = [boxes[(p, m)] for p, m in leaves
+              if (p, m) in boxes and boxes[(p, m)].valid and p == self.page]
+        if pl:
+            self.top = max(b.y1 for b in pl)
+            self.bottom = min(b.y0 for b in pl)
+            self.left = min(b.x0 for b in pl)
+            self.right = max(b.x1 for b in pl)
+            self.chars = sum(b.chars for b in pl)
+            self.text = "".join(b.text for b in pl)[:60]
+        else:
+            self.top = self.bottom = self.left = self.right = None
+            self.chars, self.text = 0, ""
+
+    @property
+    def positioned(self):
+        return self.top is not None
+
+
+# ---------------------------------------------------------------- pass 2 logic
+def _columns(blocks, gutter=18.0):
+    """Split blocks into columns by finding vertical gutters they never cross."""
+    spans = sorted((b.left, b.right) for b in blocks if b.positioned)
+    if not spans:
+        return [blocks]
+    cuts, cur_end = [], spans[0][1]
+    for l, r in spans[1:]:
+        if l - cur_end > gutter:
+            cuts.append((cur_end + l) / 2.0)
+        cur_end = max(cur_end, r)
+    if not cuts:
+        return [blocks]
+    cols = [[] for _ in range(len(cuts) + 1)]
+    for b in blocks:
+        i = 0
+        while i < len(cuts) and b.positioned and b.left > cuts[i]:
+            i += 1
+        cols[i].append(b)
+    return [c for c in cols if c]
+
+
+def _order_page(blocks, page_width, band=6.0):
+    """Column-aware XY-cut for one page's blocks."""
+    positioned = [b for b in blocks if b.positioned]
+    floating = [b for b in blocks if not b.positioned]
+    if not positioned:
+        return blocks
+
+    full_w = 0.55 * page_width
+    positioned.sort(key=lambda b: (-b.top, b.left))
+
+    # split into row-groups separated by full-width blocks
+    groups, cur = [], []
+    for b in positioned:
+        if (b.right - b.left) >= full_w:
+            if cur:
+                groups.append(cur)
+                cur = []
+            groups.append([b])
+        else:
+            cur.append(b)
+    if cur:
+        groups.append(cur)
+
+    out = []
+    for g in groups:
+        if len(g) == 1:
+            out.extend(g)
+            continue
+        cols = _columns(g)
+        if len(cols) == 1:
+            out.extend(sorted(g, key=lambda b: (-b.top, b.left)))
+        else:
+            for c in sorted(cols, key=lambda c: min(b.left for b in c)):
+                out.extend(sorted(c, key=lambda b: (-b.top, b.left)))
+    # blocks with no geometry (image-only figures) keep their original slot order
+    out.extend(floating)
+    return out
+
+
+
+def _sort_leaf_content(pdf, boxes, pidx):
+    """
+    Reorder the MCID/MCR children of every LEAF element (one with no child
+    struct elements) into geometric reading order: top-to-bottom, then
+    left-to-right within a ~6pt band. Fixes fused elements whose /K lists
+    marked content from several Y-bands in scrambled order (e.g. a heading
+    that swallowed the title + spacer glyphs + a stray body glyph), which
+    block-level reordering cannot touch. Reordering /K entries does NOT alter
+    the ParentTree (MCID->element), so this is PAC-safe.
+    """
+    from pikepdf import Dictionary as _D, Array as _A
+    touched = 0
+
+    def page_of(node, inherited):
+        pg = node.get("/Pg")
+        if pg is not None:
+            try:
+                return pidx.get(pg.objgen, inherited)
+            except Exception:
+                return inherited
+        return inherited
+
+    def ref_of(kid, pi):
+        k = kid.get_object() if hasattr(kid, "get_object") else kid
+        if isinstance(kid, int):
+            return (pi, int(kid))
+        if isinstance(k, _D) and str(k.get("/Type", "")) == "/MCR" and "/MCID" in k:
+            try:
+                m = int(k["/MCID"])
+            except Exception:
+                return None
+            pg = k.get("/Pg")
+            tgt = pidx.get(pg.objgen) if pg is not None else pi
+            return (tgt, m)
+        return None
+
+    def key(kid, pi):
+        r = ref_of(kid, pi)
+        b = boxes.get(r) if r else None
+        if b is not None and b.valid:
+            return (0, round(-b.y1 / 6.0), b.x0)   # positioned: top->bottom, left->right
+        return (1, 0, 0)                            # unpositioned: keep at end, stable
+
+    def walk(node, inherited):
+        pi = page_of(node, inherited)
+        ks = node.get("/K")
+        if ks is None:
+            return
+        kids = list(ks) if isinstance(ks, _A) else [ks]
+        child_elems = [c for c in kids
+                       if isinstance((c.get_object() if hasattr(c, "get_object") else c), _D)
+                       and "/S" in (c.get_object() if hasattr(c, "get_object") else c)]
+        if child_elems:
+            for c in child_elems:
+                walk(c.get_object() if hasattr(c, "get_object") else c, pi)
+            return
+        # pure leaf: only re-sort if its content spans MULTIPLE Y-bands, i.e.
+        # it is a FUSED element (a heading that swallowed the title + spacers +
+        # a body glyph). Single-line labels/headings, where every glyph shares
+        # one baseline, are left exactly as tagged so a decorative badge like
+        # "Chapter" is never reshuffled by a noisy left-right sort.
+        if len(kids) > 1:
+            tops = []
+            for c in kids:
+                r = ref_of(c, pi); b = boxes.get(r) if r else None
+                if b is not None and b.valid:
+                    tops.append(b.y1)
+            if tops and (max(tops) - min(tops)) > 24.0:
+                ordered = sorted(kids, key=lambda c: key(c, pi))
+                if [id(x) for x in ordered] != [id(x) for x in kids]:
+                    node["/K"] = _A(ordered)
+                    nonlocal_touched[0] += 1
+
+    nonlocal_touched = [0]
+    root = pdf.Root["/StructTreeRoot"]
+    for c in (list(root["/K"]) if isinstance(root.get("/K"), _A) else [root.get("/K")]):
+        if c is None:
+            continue
+        cc = c.get_object() if hasattr(c, "get_object") else c
+        if isinstance(cc, _D) and "/S" in cc:
+            walk(cc, None)
+    return nonlocal_touched[0]
+
+
+# ---------------------------------------------------------------- main
+def fix(inp, outp, within_page=False, report=False):
+    pdf = pikepdf.open(inp)
+    if "/StructTreeRoot" not in pdf.Root:
+        print("no structure tree, nothing to do")
+        return
+    pidx = _page_index_map(pdf)
+    boxes = document_mcid_boxes(pdf)
+
+    parent, key = _find_block_parent(pdf)
+    kids = list(parent[key]) if isinstance(parent[key], Array) else [parent[key]]
+    kids = _expand(kids, pidx)
+
+    blocks = []
+    for i, k in enumerate(kids):
+        lv = []
+        _leaves(k, pidx, None, lv)
+        blocks.append(Block(k, i, lv, boxes))
+
+    before = [b.page for b in blocks if b.page is not None]
+
+    # PASS 1 - stable sort by page (unplaced blocks keep their neighbour's page)
+    last = 0
+    for b in blocks:
+        if b.page is None:
+            b.page = last
+        else:
+            last = b.page
+    ordered = sorted(blocks, key=lambda b: (b.page, b.idx))
+
+    # PASS 2 - within-page column-aware order
+    if within_page:
+        by_page = collections.OrderedDict()
+        for b in ordered:
+            by_page.setdefault(b.page, []).append(b)
+        ordered = []
+        for pg, bl in by_page.items():
+            w = float(pdf.pages[pg].mediabox[2]) - float(pdf.pages[pg].mediabox[0])
+            ordered.extend(_order_page(bl, w))
+
+    parent[key] = Array([b.obj for b in ordered])
+
+    # within-element pass: order each leaf's MCIDs top-to-bottom
+    leaf_sorted = _sort_leaf_content(pdf, boxes, pidx)
+
+    # flattening re-parents elements: /P and the ParentTree must both be redone
+    nfix = fix_struct_parents(pdf)
+    rebuild_parent_tree(pdf)
+
+    after = [b.page for b in ordered]
+    if report:
+        def jumps(seq):
+            c = [seq[0]]
+            for s in seq[1:]:
+                if s != c[-1]:
+                    c.append(s)
+            return sum(1 for a, b in zip(c, c[1:]) if b < a), [x + 1 for x in c]
+        jb, sb = jumps(before)
+        ja, sa = jumps(after)
+        print(f"blocks reordered : {sum(1 for i, b in enumerate(ordered) if b.idx != i)}/{len(blocks)}")
+        print(f"backward page jumps : {jb} -> {ja}")
+        print(f"page sequence before: {sb}")
+        print(f"page sequence after : {sa}")
+        print(f"/P pointers repaired: {nfix}")
+
+    pdf.save(outp)
+    pdf.close()   # Windows: os.replace() is denied while the file is still open
+    print(f"saved {outp}")
+
+
+if __name__ == "__main__":
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    fix(args[0], args[1],
+        within_page="--within-page" in sys.argv,
+        report="--report" in sys.argv)

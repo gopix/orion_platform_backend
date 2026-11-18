@@ -13,9 +13,9 @@ print()
 
 # ── 1. Check the .py files have the correct code ───────────────────────────
 files = {
-    "remediator":  ROOT / "src/modules/accessibility_plus/engines/remediator/document__remediator_agent.py",
-    "pipeline":    ROOT / "src/modules/accessibility_plus/engines/accessibility_remediation_pipeline.py",
-    "validator":   ROOT / "src/modules/accessibility_plus/engines/validator/document_accessibility_agent.py",
+    "remediator":  ROOT / "src/modules/accessibility_pdf/engines/remediator/document__remediator_agent.py",
+    "pipeline":    ROOT / "src/modules/accessibility_pdf/engines/accessibility_remediation_pipeline.py",
+    "validator":   ROOT / "src/modules/accessibility_pdf/engines/validator/document_accessibility_agent.py",
 }
 
 print("=== Checking .py source files ===")
@@ -62,7 +62,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # Remove any cached version
-mod_key = "src.modules.accessibility_plus.engines.remediator.document__remediator_agent"
+mod_key = "src.modules.accessibility_pdf.engines.remediator.document__remediator_agent"
 if mod_key in sys.modules:
     del sys.modules[mod_key]
 

@@ -10,7 +10,7 @@ url = 'http://localhost:8000/api/v1/accessibility/orion-validate-pdf'
 import os
 import glob
 
-pdf_files = glob.glob(r'c:\Orion\codebase\orion_backend\src\modules\accessibility_plus\temp\remediat*', recursive=True)
+pdf_files = glob.glob(r'c:\Orion\codebase\orion_backend\src\modules\accessibility_pdf\temp\remediat*', recursive=True)
 if not pdf_files:
     # Create a minimal PDF using native bytes
     pdf_hex = b'%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj 3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R>>endobj 4 0 obj<</Length 44>>stream\nBT /F1 12 Tf 100 750 Td (Test) Tj ET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f\n0000000009 00000 n\n0000000058 00000 n\n0000000115 00000 n\n0000000190 00000 n\ntrailer<</Size 5/Root 1 0 R>>\nstartxref\n284\n%%EOF'

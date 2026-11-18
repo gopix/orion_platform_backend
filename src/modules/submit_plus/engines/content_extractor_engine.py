@@ -130,12 +130,12 @@ class ContentExtractorEngine(BaseEngine):
     def _extract_from_pdf(self, file_path: str) -> dict:
         """Extract text content from a PDF document"""
         try:
-            import PyPDF2
-            
+            import pypdf
+
             content_parts = []
-            
+
             with open(file_path, 'rb') as pdf_file:
-                pdf_reader = PyPDF2.PdfReader(pdf_file)
+                pdf_reader = pypdf.PdfReader(pdf_file)
                 num_pages = len(pdf_reader.pages)
                 
                 for page_num in range(num_pages):
@@ -158,10 +158,10 @@ class ContentExtractorEngine(BaseEngine):
             }
             
         except ImportError:
-            logger.error("PyPDF2 is not installed. Install it using: pip install PyPDF2")
+            logger.error("pypdf is not installed. Install it using: pip install pypdf")
             return {
                 "content": "",
                 "status": "error",
-                "message": "PyPDF2 library is not installed",
-                "error_details": "Install PyPDF2 to process PDF files"
+                "message": "pypdf library is not installed",
+                "error_details": "Install pypdf to process PDF files"
             }

@@ -115,10 +115,10 @@ else:
 
         # Now run embed_standard_fonts
         print("\n    Running embed_standard_fonts...")
-        fixer_path = Path(__file__).parent / "src" / "modules" / "accessibility_plus" / "engines" / "font_encoding_fixer.py"
+        fixer_path = Path(__file__).parent / "src" / "modules" / "accessibility_pdf" / "engines" / "font_encoding_fixer.py"
         if not fixer_path.exists():
             # Try relative path
-            fixer_path = Path("src/modules/accessibility_plus/engines/font_encoding_fixer.py")
+            fixer_path = Path("src/modules/accessibility_pdf/engines/font_encoding_fixer.py")
 
         if not fixer_path.exists():
             print(f"    FAILED: font_encoding_fixer.py not found at {fixer_path}")

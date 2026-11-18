@@ -10,12 +10,40 @@ python-multipart==0.0.9
 PyMySQL==1.1.0
 cryptography>=42.0.0,<45.0.0
 bcrypt==4.0.1
-passlib[bcrypt]==1.7.4
+requests>=2.31.0
 python-docx==0.8.11
 pypdf==6.0.0
 openpyxl==3.1.5
 PyMuPDF==1.27.2.3
 anthropic==0.109.2
-fontTools== 4.63.0
+fontTools==4.63.0
 pikepdf==10.9.0
 pdfplumber==0.11.10
+python-pptx==1.0.2
+Jinja2==3.1.4
+reportlab==4.5.1
+
+# Book Forge AI — embeddings & vector store
+openai>=1.55.3
+pinecone==5.0.1
+
+# Book Forge AI — LLM support
+# Accurate token counting in ai/foundation/llm/utils/token_counter.py. Without
+# it the counter silently falls back to a chars/4 heuristic. NOTE: tiktoken
+# fetches its BPE files on first use — the Dockerfile pre-warms
+# TIKTOKEN_CACHE_DIR so the container never needs network for this at runtime.
+tiktoken==0.8.0
+# Gemini provider (ai/foundation/llm/providers/gemini_provider.py), reachable
+# via LLM_PROVIDER=gemini. Without it that provider raises at call time.
+# NOTE: google-generativeai is Google's legacy SDK and is superseded by
+# google-genai; the provider should be migrated when convenient.
+google-generativeai==0.8.3
+
+# Guardrails: YAML policy files via
+# ai/intelligence/guardrails/utils/policy_loader.py load_file()/from_yaml().
+PyYAML==6.0.2
+
+# Accessibility QA linter: advisory spell check in
+# accessibility_pdf/engines/accessibility_linter.py (lint(spell=True) is the
+# default). Without it the spelling detector silently disables itself.
+pyspellchecker==0.8.1

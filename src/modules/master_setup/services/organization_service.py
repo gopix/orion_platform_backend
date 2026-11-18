@@ -11,7 +11,7 @@ class OrganizationService:
         if not name or not name.strip():
             raise ValueError("Organization name is required")
 
-        organization = Organization(name=name.strip(), created_by=created_by)
+        organization = Organization(organization_name=name.strip(), created_by=created_by)
         db.add(organization)
         db.commit()
         db.refresh(organization)
@@ -35,7 +35,7 @@ class OrganizationService:
             return None
 
         if name and name.strip():
-            organization.name = name.strip()
+            organization.organization_name = name.strip()
 
         if updated_by is not None:
             organization.updated_by = updated_by

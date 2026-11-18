@@ -1,0 +1,28 @@
+{
+  "rows": [
+    {
+      "check_code": "COLOR-001",
+      "check_name": "Text colour contrast (normal text)",
+      "description": "Normal-size text must have a contrast ratio of at least 4.5:1 against its background (WCAG 1.4.3, Level AA).",
+      "category": "Color Accessibility",
+      "default_priority": "HIGH",
+      "wcag_reference": "1.4.3",
+      "pdfua_reference": null,
+      "remediation_guidance": "Darken failing text colours until they reach at least 4.5:1 contrast against the page background. Applied automatically by contrast_fixer during post-processing.",
+      "agent_code": "COLOR_ACCESSIBILITY_AGENT",
+      "is_active": true
+    },
+    {
+      "check_code": "COLOR-002",
+      "check_name": "Text colour contrast (large text)",
+      "description": "Large text (>= 18 pt, or >= 14 pt bold) must have a contrast ratio of at least 3:1 against its background (WCAG 1.4.3, Level AA).",
+      "category": "Color Accessibility",
+      "default_priority": "MEDIUM",
+      "wcag_reference": "1.4.3",
+      "pdfua_reference": null,
+      "remediation_guidance": "Darken failing large-text colours until they reach at least 3:1 contrast. Applied automatically by contrast_fixer during post-processing.",
+      "agent_code": "COLOR_ACCESSIBILITY_AGENT",
+      "is_active": true
+    }
+  ]
+}

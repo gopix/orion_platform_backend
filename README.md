@@ -5,7 +5,7 @@ for /d /r . %d in (__pycache__) do @if exist "%d" echo %d
 for /d /r . %d in (__pycache__) do @if exist "%d" rd /s /q "%d"
 
 # Step -0 :: stop containers
-docker-compose down 
+docker-compose down  -v
 
 # step-1:: For removing images/containber
 docker system prune -a --volumes -f
@@ -52,4 +52,9 @@ docker-compose -f docker-compose.prod.yml up -d
 
 
 
-Submit API -> Controller -> Service (DB save) -> Pipeline -> Engines -> Aggregator -> DB (analysis_json) -> Response
+**********************Pine Cone*****************
+python scripts/inspect_pinecone.py                   //for inspect
+python scripts/inspect_pinecone.py 3 --reset         //for delete 
+
+
+python scripts\seed_blueprint_prompts.py   //in the start needed

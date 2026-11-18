@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """Debug check fetching"""
-from src.modules.accessibility_plus.engines.accesibility_engine_pipeline import AccessibilityEnginePipeline
+from src.modules.accessibility_pdf.engines.accesibility_engine_pipeline import AccessibilityEnginePipeline
 
 pipeline = AccessibilityEnginePipeline()
 
@@ -19,7 +19,7 @@ else:
     
     # Check what's in the org checks table for all agents
     from src.core.database import SessionLocal
-    from src.modules.accessibility_plus.models.org_project_accessibility_model import OrgProjectAccessibilityCheckModel
+    from src.modules.accessibility_pdf.models.org_project_accessibility_model import OrgProjectAccessibilityCheckModel
     
     session = SessionLocal()
     all_checks = session.query(OrgProjectAccessibilityCheckModel).filter(

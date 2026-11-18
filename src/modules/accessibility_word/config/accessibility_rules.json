@@ -1,0 +1,63 @@
+{
+  "version": "1.0.0",
+  "scoring": {
+    "severity_weights": { "CRITICAL": 10, "HIGH": 5, "MEDIUM": 3, "LOW": 1 }
+  },
+  "thresholds": {
+    "max_findings_per_rule": 100,
+    "min_paragraphs_expecting_headings": 5,
+    "min_words_expecting_toc": 3000,
+    "min_font_size_pt": 9,
+    "fake_heading_max_chars": 120,
+    "min_contrast_normal": 4.5,
+    "min_contrast_large": 3.0,
+    "all_caps_min_words": 8,
+    "layout_spaces_min": 4
+  },
+  "rules": [
+    {"rule_id":"STR-001","analyzer":"StructureAnalyzer","category":"STRUCTURAL_ACCESSIBILITY","severity":"CRITICAL","title":"Document uses heading styles","wcag":["1.3.1","2.4.6"],"recommendation":"Apply built-in Heading styles to section titles."},
+    {"rule_id":"STR-002","analyzer":"StructureAnalyzer","category":"STRUCTURAL_ACCESSIBILITY","severity":"HIGH","title":"Heading levels do not skip","wcag":["1.3.1"],"recommendation":"Use sequential heading levels without skipping."},
+    {"rule_id":"STR-003","analyzer":"StructureAnalyzer","category":"STRUCTURAL_ACCESSIBILITY","severity":"MEDIUM","title":"First heading is Heading 1","wcag":["1.3.1"],"recommendation":"Start the document outline with Heading 1."},
+    {"rule_id":"STR-004","analyzer":"StructureAnalyzer","category":"STRUCTURAL_ACCESSIBILITY","severity":"MEDIUM","title":"Headings are not empty","wcag":["2.4.6"],"recommendation":"Add heading text or change the paragraph style to Normal."},
+    {"rule_id":"STR-005","analyzer":"StructureAnalyzer","category":"STRUCTURAL_ACCESSIBILITY","severity":"HIGH","title":"Visual headings use heading styles","wcag":["1.3.1"],"recommendation":"If this text is a section title, apply a Heading style instead of manual formatting."},
+    {"rule_id":"STR-006","analyzer":"StructureAnalyzer","category":"STRUCTURAL_ACCESSIBILITY","severity":"HIGH","title":"Lists use real list formatting","wcag":["1.3.1"],"recommendation":"Replace typed bullets or numbers with Word list formatting."},
+    {"rule_id":"STR-007","analyzer":"StructureAnalyzer","category":"STRUCTURAL_ACCESSIBILITY","severity":"LOW","title":"No empty paragraphs used for spacing","wcag":["1.3.1"],"recommendation":"Remove empty paragraphs and use paragraph spacing instead."},
+    {"rule_id":"STR-008","analyzer":"StructureAnalyzer","category":"STRUCTURAL_ACCESSIBILITY","severity":"LOW","title":"Long document has a table of contents","wcag":["2.4.5"],"recommendation":"Insert an automatic table of contents built from the headings."},
+    {"rule_id":"STR-009","analyzer":"StructureAnalyzer","category":"STRUCTURAL_ACCESSIBILITY","severity":"MEDIUM","title":"Link text is descriptive","wcag":["2.4.4"],"recommendation":"Replace raw URLs and phrases like 'click here' with text that says where the link goes."},
+    {"rule_id":"STR-010","analyzer":"StructureAnalyzer","category":"STRUCTURAL_ACCESSIBILITY","severity":"LOW","title":"No repeated spaces used for layout","wcag":["1.3.2"],"recommendation":"Use indents, tab stops or tables instead of repeated spaces."},
+
+    {"rule_id":"IMG-001","analyzer":"ImageAnalyzer","category":"IMAGE_ACCESSIBILITY","severity":"CRITICAL","title":"Images have alt text","wcag":["1.1.1"],"recommendation":"Add alt text, or mark the image as decorative."},
+    {"rule_id":"IMG-002","analyzer":"ImageAnalyzer","category":"IMAGE_ACCESSIBILITY","severity":"HIGH","title":"Alt text is not a placeholder","wcag":["1.1.1"],"recommendation":"Replace the file name or placeholder with a description of the image."},
+    {"rule_id":"IMG-003","analyzer":"ImageAnalyzer","category":"IMAGE_ACCESSIBILITY","severity":"MEDIUM","title":"Auto-generated alt text is reviewed","wcag":["1.1.1"],"recommendation":"Check the generated description against the image and correct it."},
+    {"rule_id":"IMG-004","analyzer":"ImageAnalyzer","category":"IMAGE_ACCESSIBILITY","severity":"HIGH","title":"Alt text accurately describes each image","wcag":["1.1.1"],"recommendation":"Have a person confirm that the alt text conveys the image's purpose."},
+
+    {"rule_id":"MET-001","analyzer":"MetadataAnalyzer","category":"METADATA_ACCESSIBILITY","severity":"HIGH","title":"Document title is set","wcag":["2.4.2"],"recommendation":"Set a descriptive title in File > Info > Properties."},
+    {"rule_id":"MET-002","analyzer":"MetadataAnalyzer","category":"METADATA_ACCESSIBILITY","severity":"LOW","title":"Document author is set","wcag":[],"recommendation":"Set the author in File > Info > Properties."},
+    {"rule_id":"MET-003","analyzer":"MetadataAnalyzer","category":"METADATA_ACCESSIBILITY","severity":"CRITICAL","title":"Default document language is set","wcag":["3.1.1"],"recommendation":"Set the proofing language in the document defaults or Normal style."},
+    {"rule_id":"MET-004","analyzer":"MetadataAnalyzer","category":"METADATA_ACCESSIBILITY","severity":"HIGH","title":"Default language tag is valid","wcag":["3.1.1"],"recommendation":"Use a valid language tag such as en-US or hi-IN."},
+    {"rule_id":"MET-005","analyzer":"MetadataAnalyzer","category":"METADATA_ACCESSIBILITY","severity":"MEDIUM","title":"Language changes are identified","wcag":["3.1.2"],"recommendation":"Have a person confirm that foreign-language passages carry the right proofing language."},
+    {"rule_id":"MET-006","analyzer":"MetadataAnalyzer","category":"METADATA_ACCESSIBILITY","severity":"MEDIUM","title":"No unresolved tracked changes or comments","wcag":[],"recommendation":"Accept or reject tracked changes and resolve comments before release."},
+
+    {"rule_id":"ROD-001","analyzer":"ReadingOrderAnalyzer","category":"READING_ORDER","severity":"HIGH","title":"Content is not in text boxes","wcag":["1.3.2"],"recommendation":"Move text box content into the main document flow."},
+    {"rule_id":"ROD-002","analyzer":"ReadingOrderAnalyzer","category":"READING_ORDER","severity":"MEDIUM","title":"Objects are inline with text","wcag":["1.3.2"],"recommendation":"Set the object's wrapping to 'In line with text'."},
+    {"rule_id":"ROD-003","analyzer":"ReadingOrderAnalyzer","category":"READING_ORDER","severity":"MEDIUM","title":"Multi-column reading order is correct","wcag":["1.3.2"],"recommendation":"Have a person confirm that the column content reads in the right order."},
+    {"rule_id":"ROD-004","analyzer":"ReadingOrderAnalyzer","category":"READING_ORDER","severity":"MEDIUM","title":"Essential content is not only in headers or footers","wcag":["1.3.2"],"recommendation":"Have a person confirm that header and footer text is repeated in the body if it is essential."},
+    {"rule_id":"ROD-005","analyzer":"ReadingOrderAnalyzer","category":"READING_ORDER","severity":"MEDIUM","title":"Tabs are not used to fake tables","wcag":["1.3.1","1.3.2"],"recommendation":"Convert tab-aligned rows into a real table."},
+
+    {"rule_id":"TBL-001","analyzer":"TableAnalyzer","category":"TABLE_ACCESSIBILITY","severity":"HIGH","title":"Tables have a marked header row","wcag":["1.3.1"],"recommendation":"Turn on 'Repeat as header row at the top of each page' for the first row."},
+    {"rule_id":"TBL-002","analyzer":"TableAnalyzer","category":"TABLE_ACCESSIBILITY","severity":"MEDIUM","title":"Tables have no merged cells","wcag":["1.3.1"],"recommendation":"Split merged cells and use a simple table grid."},
+    {"rule_id":"TBL-003","analyzer":"TableAnalyzer","category":"TABLE_ACCESSIBILITY","severity":"HIGH","title":"Tables are not nested","wcag":["1.3.1"],"recommendation":"Replace the nested table with a simple table or separate tables."},
+    {"rule_id":"TBL-004","analyzer":"TableAnalyzer","category":"TABLE_ACCESSIBILITY","severity":"MEDIUM","title":"Tables have no blank rows or columns","wcag":["1.3.1"],"recommendation":"Remove blank rows and columns and use cell spacing instead."},
+    {"rule_id":"TBL-005","analyzer":"TableAnalyzer","category":"TABLE_ACCESSIBILITY","severity":"LOW","title":"Tables have a title or description","wcag":["1.3.1"],"recommendation":"Add a title or description in Table Properties > Alt Text."},
+    {"rule_id":"TBL-006","analyzer":"TableAnalyzer","category":"TABLE_ACCESSIBILITY","severity":"MEDIUM","title":"Tables are not used only for layout","wcag":["1.3.1"],"recommendation":"Have a person confirm that this holds tabular data; otherwise replace it with normal layout."},
+
+    {"rule_id":"VIS-001","analyzer":"VisualAnalyzer","category":"VISUAL_ACCESSIBILITY","severity":"HIGH","title":"Text meets the minimum contrast ratio","wcag":["1.4.3"],"recommendation":"Change the text or background color to reach 4.5:1, or 3:1 for large text."},
+    {"rule_id":"VIS-002","analyzer":"VisualAnalyzer","category":"VISUAL_ACCESSIBILITY","severity":"MEDIUM","title":"Text is not too small","wcag":[],"recommendation":"Increase the font size."},
+    {"rule_id":"VIS-003","analyzer":"VisualAnalyzer","category":"VISUAL_ACCESSIBILITY","severity":"MEDIUM","title":"Color is not the only way of conveying meaning","wcag":["1.4.1"],"recommendation":"Have a person confirm that colored text also signals its meaning another way."},
+    {"rule_id":"VIS-004","analyzer":"VisualAnalyzer","category":"VISUAL_ACCESSIBILITY","severity":"LOW","title":"Body text is not justified","wcag":["1.4.8"],"recommendation":"Use left alignment."},
+    {"rule_id":"VIS-005","analyzer":"VisualAnalyzer","category":"VISUAL_ACCESSIBILITY","severity":"LOW","title":"Long passages are not in all caps","wcag":[],"recommendation":"Use sentence case, with bold or a heading style for emphasis."},
+
+    {"rule_id":"SRV-001","analyzer":"ScreenReaderValidator","category":"SCREEN_READER_COMPATIBILITY","severity":"HIGH","title":"Verified with NVDA","wcag":["4.1.2"],"recommendation":"Test the document with NVDA and record the evidence."},
+    {"rule_id":"SRV-002","analyzer":"ScreenReaderValidator","category":"SCREEN_READER_COMPATIBILITY","severity":"HIGH","title":"Verified with JAWS","wcag":["4.1.2"],"recommendation":"Test the document with JAWS and record the evidence."}
+  ]
+}

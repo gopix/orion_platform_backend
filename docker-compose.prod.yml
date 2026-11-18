@@ -23,6 +23,11 @@ services:
       LOG_DIR: /app/logs
       LOG_LEVEL: INFO
       VERAPDF_COMMAND: /usr/local/bin/verapdf
+      BOOK_FORGE_STORAGE_ROOT: /app/book_forge
+    volumes:
+      - orion_book_forge_data:/app/book_forge
+      - orion_uploads_data:/app/uploads
+      - orion_logs_data:/app/logs
 
   db:
     image: gopalorion/orion_db_mysql:v1.0.0
@@ -43,3 +48,6 @@ services:
 
 volumes:
   orion_db_data:
+  orion_book_forge_data:
+  orion_uploads_data:
+  orion_logs_data:
